@@ -27,6 +27,9 @@ Runs at `http://localhost:3000`. Requires the backend running at the URL in
 - `src/components/` — `KanbanBoard`, `SwimLane` (grouping is
   admin-configurable — see `BoardConfig`), `TaskCard`, `TimerControls`,
   `NavBar`.
+- `src/components/ui/` — the design system's primitives (`Button`, `Card`,
+  `Badge`, `Input`, `Select`). Build new UI out of these rather than
+  hand-rolling styles, so the app stays visually consistent.
 - `src/lib/api.ts` — thin fetch wrapper against the FastAPI backend, JWT
   stored in `localStorage`.
 - `src/lib/types.ts` — mirrors the backend's Pydantic schemas.
@@ -40,16 +43,16 @@ machine, so those columns aren't drop targets. Each task card has inline
 timer controls that only ever offer actions valid for that task's current
 state (see `backend/README.md` for the exact rules).
 
-Charts on `/reports` use `recharts`, colored from the `dataviz` skill's
-validated categorical/status palette (see the `--series-*`/`--status-*`
-custom properties in `globals.css`).
+## Design system
 
-## Known follow-up
-
-`npm audit` reports moderate/high advisories in `postcss`, a build-time
-transitive dependency of Next.js with no runtime exposure in this app.
-Clearing them requires the Next.js 16 major upgrade (React 19); left for a
-deliberate follow-up rather than bundled into this scaffold.
+Tailwind CSS v4 (CSS-first config — see the `@theme` block in
+`src/app/globals.css`) plus a small set of hand-built primitives in
+`src/components/ui/` styled in the shadcn/ui idiom, rather than a hand-rolled
+global stylesheet. The look is a clean, light, "modern SaaS" aesthetic
+(Linear/Notion/ClickUp-adjacent): white cards on a light gray page, an
+indigo accent (`brand-*` theme colors), Inter as the typeface, and generous
+whitespace. Charts on `/reports` use `recharts`, colored from the `dataviz`
+skill's validated light-mode categorical palette.
 
 ## Known follow-up
 

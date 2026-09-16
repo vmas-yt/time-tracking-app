@@ -13,12 +13,14 @@ function BoardContent() {
 
 export default function BoardPage() {
   return (
-    <main className="page">
-      <h1>Board</h1>
-      <p className="board-hint">
-        Tasks are standalone by default — link one to a project from its detail page if you need to.
-      </p>
-      <Suspense fallback={<p>Loading…</p>}>
+    <main className="mx-auto max-w-[1600px] px-6 py-8">
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Board</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          Tasks are standalone by default — link one to a project from its detail page if needed.
+        </p>
+      </div>
+      <Suspense fallback={<p className="text-sm text-gray-500">Loading…</p>}>
         <BoardContent />
       </Suspense>
     </main>

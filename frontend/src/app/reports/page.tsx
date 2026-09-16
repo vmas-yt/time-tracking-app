@@ -19,10 +19,12 @@ import {
 import { api } from "@/lib/api";
 import { TASK_STATUSES } from "@/lib/types";
 import type { CumulativeFlowPoint, CycleTimePoint, LeadTimePoint, ThroughputBucket } from "@/lib/types";
+import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 
-const SERIES = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)"];
-const GRID = "var(--border)";
-const TICK = { fill: "var(--text-muted)", fontSize: 11 };
+const SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"];
+const GRID = "#e5e7eb";
+const TICK = { fill: "#9ca3af", fontSize: 11 };
+const TOOLTIP_STYLE = { background: "#ffffff", border: `1px solid ${GRID}`, borderRadius: 8, fontSize: 12 };
 
 function mean(values: number[]): number {
   return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
@@ -78,119 +80,140 @@ export default function ReportsPage() {
   const cfdData = cfd.map((p) => ({ date: p.date, ...p.counts }));
 
   return (
-    <main className="page">
-      <h1>Reports</h1>
-      {error && <p className="board-error">{error} — log in first at /login</p>}
-      <div className="reports-grid">
-        <div className="report-card">
-          <h2>Control chart — cycle time per task</h2>
-          {controlPoints.length === 0 ? (
-            <p className="report-card__empty">No completed tasks yet.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <ScatterChart margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
-                <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={TICK} />
-                <YAxis dataKey="hours" tick={TICK} unit="h" />
-                <Tooltip
-                  contentStyle={{ background: "var(--surface-alt)", border: `1px solid ${GRID}` }}
-                  formatter={(value) => [`${value}h`, "Cycle time"]}
-                />
-                <ReferenceLine y={controlMean} stroke="var(--text-muted)" strokeDasharray="4 4" label="mean" />
-                <ReferenceLine
-                  y={controlMean + controlStd}
-                  stroke="var(--status-warning)"
-                  strokeDasharray="2 2"
-                  label="UCL"
-                />
-                <Scatter data={controlPoints} fill={SERIES[0]} />
-              </ScatterChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        <div className="report-card">
-          <h2>Cycle time distribution</h2>
-          {controlHours.length === 0 ? (
-            <p className="report-card__empty">No completed tasks yet.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={cycleBuckets} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
-                <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={TICK} />
-                <YAxis tick={TICK} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: "var(--surface-alt)", border: `1px solid ${GRID}` }} />
-                <Bar dataKey="count" fill={SERIES[0]} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        <div className="report-card">
-          <h2>Lead time per task</h2>
-          {leadPoints.length === 0 ? (
-            <p className="report-card__empty">No completed tasks yet.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <ScatterChart margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
-                <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={TICK} />
-                <YAxis dataKey="hours" tick={TICK} unit="h" />
-                <Tooltip
-                  contentStyle={{ background: "var(--surface-alt)", border: `1px solid ${GRID}` }}
-                  formatter={(value) => [`${value}h`, "Lead time"]}
-                />
-                <Scatter data={leadPoints} fill={SERIES[1]} />
-              </ScatterChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        <div className="report-card">
-          <h2>Throughput</h2>
-          {throughput.length === 0 ? (
-            <p className="report-card__empty">No completed tasks yet.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={throughput} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
-                <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
-                <XAxis dataKey="period_start" tick={TICK} />
-                <YAxis tick={TICK} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: "var(--surface-alt)", border: `1px solid ${GRID}` }} />
-                <Bar dataKey="completed_count" name="Completed" fill={SERIES[2]} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        <div className="report-card" style={{ gridColumn: "1 / -1" }}>
-          <h2>Cumulative flow diagram</h2>
-          {cfdData.length === 0 ? (
-            <p className="report-card__empty">No tasks yet.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={320}>
-              <AreaChart data={cfdData} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
-                <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={TICK} />
-                <YAxis tick={TICK} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: "var(--surface-alt)", border: `1px solid ${GRID}` }} />
-                <Legend wrapperStyle={{ fontSize: 12, color: "var(--text-muted)" }} />
-                {TASK_STATUSES.map((s, i) => (
-                  <Area
-                    key={s.key}
-                    type="monotone"
-                    dataKey={s.key}
-                    name={s.label}
-                    stackId="1"
-                    stroke={SERIES[i]}
-                    fill={SERIES[i]}
-                    fillOpacity={0.5}
+    <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Reports</h1>
+        <p className="mt-1 text-sm text-gray-500">Derived from completed tasks and their status history.</p>
+      </div>
+      {error && (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+          {error} — log in first at /login
+        </p>
+      )}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Control chart — cycle time per task</CardTitle>
+          </CardHeader>
+          <CardBody>
+            {controlPoints.length === 0 ? (
+              <p className="text-sm text-gray-400">No completed tasks yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <ScatterChart margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                  <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tick={TICK} />
+                  <YAxis dataKey="hours" tick={TICK} unit="h" />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(value) => [`${value}h`, "Cycle time"]} />
+                  <ReferenceLine y={controlMean} stroke="#9ca3af" strokeDasharray="4 4" label="mean" />
+                  <ReferenceLine
+                    y={controlMean + controlStd}
+                    stroke="#eda100"
+                    strokeDasharray="2 2"
+                    label="UCL"
                   />
-                ))}
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+                  <Scatter data={controlPoints} fill={SERIES[0]} />
+                </ScatterChart>
+              </ResponsiveContainer>
+            )}
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Cycle time distribution</CardTitle>
+          </CardHeader>
+          <CardBody>
+            {controlHours.length === 0 ? (
+              <p className="text-sm text-gray-400">No completed tasks yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={cycleBuckets} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                  <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={TICK} />
+                  <YAxis tick={TICK} allowDecimals={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Bar dataKey="count" fill={SERIES[0]} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Lead time per task</CardTitle>
+          </CardHeader>
+          <CardBody>
+            {leadPoints.length === 0 ? (
+              <p className="text-sm text-gray-400">No completed tasks yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <ScatterChart margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                  <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tick={TICK} />
+                  <YAxis dataKey="hours" tick={TICK} unit="h" />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(value) => [`${value}h`, "Lead time"]} />
+                  <Scatter data={leadPoints} fill={SERIES[1]} />
+                </ScatterChart>
+              </ResponsiveContainer>
+            )}
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Throughput</CardTitle>
+          </CardHeader>
+          <CardBody>
+            {throughput.length === 0 ? (
+              <p className="text-sm text-gray-400">No completed tasks yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={throughput} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                  <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
+                  <XAxis dataKey="period_start" tick={TICK} />
+                  <YAxis tick={TICK} allowDecimals={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Bar dataKey="completed_count" name="Completed" fill={SERIES[2]} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </CardBody>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Cumulative flow diagram</CardTitle>
+          </CardHeader>
+          <CardBody>
+            {cfdData.length === 0 ? (
+              <p className="text-sm text-gray-400">No tasks yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={320}>
+                <AreaChart data={cfdData} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                  <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tick={TICK} />
+                  <YAxis tick={TICK} allowDecimals={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Legend wrapperStyle={{ fontSize: 12, color: "#6b7280" }} />
+                  {TASK_STATUSES.map((s, i) => (
+                    <Area
+                      key={s.key}
+                      type="monotone"
+                      dataKey={s.key}
+                      name={s.label}
+                      stackId="1"
+                      stroke={SERIES[i]}
+                      fill={SERIES[i]}
+                      fillOpacity={0.5}
+                    />
+                  ))}
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </CardBody>
+        </Card>
       </div>
     </main>
   );

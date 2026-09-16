@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { Task, TimeEntry } from "@/lib/types";
 import { TASK_CATEGORIES } from "@/lib/types";
+import { Badge } from "@/components/ui/Badge";
 import { TimerControls } from "./TimerControls";
 
 interface TaskCardProps {
@@ -19,16 +20,25 @@ export function TaskCard({ task, openEntries, onTimerChange, onDragStart }: Task
     task.category;
 
   return (
-    <div className="task-card" draggable onDragStart={() => onDragStart(task)}>
-      <div className="task-card__badges">
-        {task.task_type === "ad_hoc" && <span className="badge badge--ad-hoc">Ad-hoc</span>}
-        {task.priority === "expedite" && <span className="badge badge--expedite">Expedite</span>}
-        <span className="badge badge--category">{categoryLabel}</span>
+    <div
+      className="cursor-grab space-y-2 rounded-lg border border-gray-200 bg-white p-3 shadow-sm transition-shadow hover:shadow-md active:cursor-grabbing"
+      draggable
+      onDragStart={() => onDragStart(task)}
+    >
+      <div className="flex flex-wrap gap-1">
+        {task.task_type === "ad_hoc" && <Badge tone="amber">Ad-hoc</Badge>}
+        {task.priority === "expedite" && <Badge tone="red">Expedite</Badge>}
+        <Badge tone="blue">{categoryLabel}</Badge>
       </div>
-      <Link href={`/tasks/${task.id}`} className="task-card__title">
+      <Link
+        href={`/tasks/${task.id}`}
+        className="block text-sm font-medium text-gray-900 hover:text-brand-600"
+      >
         {task.title}
       </Link>
-      {task.description && <div className="task-card__description">{task.description}</div>}
+      {task.description && (
+        <p className="line-clamp-2 text-xs text-gray-500">{task.description}</p>
+      )}
       <TimerControls task={task} openEntries={openEntries} onChange={onTimerChange} />
     </div>
   );

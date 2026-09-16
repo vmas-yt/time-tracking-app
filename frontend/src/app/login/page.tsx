@@ -3,6 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/api";
+import { Button } from "@/components/ui/Button";
+import { Card, CardBody } from "@/components/ui/Card";
+import { Input } from "@/components/ui/Input";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -28,43 +31,52 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="page" style={{ maxWidth: 360 }}>
-      <h1>{mode === "login" ? "Log in" : "Register"}</h1>
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {mode === "register" && (
-          <input
-            placeholder="Full name"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            style={{ padding: 8 }}
-          />
-        )}
-        <input
-          placeholder="Email"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={{ padding: 8 }}
-        />
-        <input
-          placeholder="Password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{ padding: 8 }}
-        />
-        {error && <p style={{ color: "var(--accent-danger)" }}>{error}</p>}
-        <button className="timer-btn timer-btn--start" type="submit">
-          {mode === "login" ? "Log in" : "Register"}
-        </button>
-      </form>
-      <button
-        className="timer-btn"
-        style={{ marginTop: 12 }}
-        onClick={() => setMode(mode === "login" ? "register" : "login")}
-      >
-        {mode === "login" ? "Need an account? Register" : "Have an account? Log in"}
-      </button>
+    <main className="flex min-h-[calc(100vh-57px)] items-center justify-center bg-gray-50 px-4">
+      <Card className="w-full max-w-sm">
+        <CardBody className="space-y-5">
+          <div>
+            <h1 className="text-lg font-semibold text-gray-900">
+              {mode === "login" ? "Welcome back" : "Create your account"}
+            </h1>
+            <p className="mt-1 text-sm text-gray-500">
+              {mode === "login"
+                ? "Log in to track time against your tasks."
+                : "The first account created becomes an admin."}
+            </p>
+          </div>
+          <form onSubmit={handleSubmit} className="space-y-3">
+            {mode === "register" && (
+              <Input
+                placeholder="Full name"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+              />
+            )}
+            <Input
+              placeholder="Email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <Input
+              placeholder="Password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            <Button variant="primary" type="submit" className="w-full">
+              {mode === "login" ? "Log in" : "Register"}
+            </Button>
+          </form>
+          <button
+            className="w-full text-center text-sm text-gray-500 hover:text-gray-700"
+            onClick={() => setMode(mode === "login" ? "register" : "login")}
+          >
+            {mode === "login" ? "Need an account? Register" : "Have an account? Log in"}
+          </button>
+        </CardBody>
+      </Card>
     </main>
   );
 }

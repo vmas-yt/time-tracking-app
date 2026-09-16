@@ -41,11 +41,15 @@ integrations, no automatic/idle tracking).
   - The reports page (`app/reports/page.tsx`) — control chart, cycle time,
     lead time, cumulative flow diagram, throughput are all must-haves per
     the PRD; if you touch charts, load the `dataviz` skill first.
-- Keep visual language consistent via `app/globals.css` (CSS custom
-  properties for color, existing `.task-card`, `.timer-*`, `.swimlane-*`,
-  `.badge-*`, `.report-*` class conventions, and the categorical/status chart
-  color variables `--series-1..5`/`--status-*`) rather than introducing a new
-  styling system.
+- Keep visual language consistent with the existing design system: Tailwind
+  CSS v4 (CSS-first config in `app/globals.css`'s `@theme` block — brand
+  color scale, Inter typeface) plus the shared primitives in
+  `components/ui/` (`Button`, `Card`, `Badge`, `Input`, `Select`). Build new
+  UI out of those primitives and Tailwind utility classes rather than
+  hand-rolled CSS or a competing component pattern. The intended feel is a
+  clean, light "modern SaaS" look (Linear/Notion/ClickUp-adjacent) — white
+  cards on a light gray page, generous whitespace, subtle borders/shadows,
+  not a dense or dark-mode-first UI.
 
 ## Working style
 

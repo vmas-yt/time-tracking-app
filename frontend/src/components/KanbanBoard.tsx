@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import type { BoardConfig, Task, TaskCategory, TaskPriority, TaskStatus, TaskType, TimeEntry, User } from "@/lib/types";
 import { TASK_CATEGORIES } from "@/lib/types";
+import { Button } from "@/components/ui/Button";
+import { Input, Select } from "@/components/ui/Input";
 import { SwimLane } from "./SwimLane";
 
 interface KanbanBoardProps {
@@ -106,49 +108,63 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
   };
 
   return (
-    <div className="kanban-board">
+    <div className="space-y-8">
       {error && (
-        <p className="board-error" onClick={() => setError(null)}>
-          {error} (click to dismiss)
+        <p
+          className="cursor-pointer rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
+          onClick={() => setError(null)}
+        >
+          {error} <span className="text-red-400">(click to dismiss)</span>
         </p>
       )}
-      <form onSubmit={handleCreateTask} className="kanban-board__new-task">
-        <input
+      <form onSubmit={handleCreateTask} className="flex flex-wrap gap-2">
+        <Input
           value={newTitle}
           onChange={(e) => setNewTitle(e.target.value)}
           placeholder="New task title"
+          className="max-w-xs"
         />
-        <select value={newCategory} onChange={(e) => setNewCategory(e.target.value as TaskCategory)}>
+        <Select
+          value={newCategory}
+          onChange={(e) => setNewCategory(e.target.value as TaskCategory)}
+          className="w-auto"
+        >
           {TASK_CATEGORIES.filter((c) => c.key !== "other").map((c) => (
             <option key={c.key} value={c.key}>
               {c.label}
             </option>
           ))}
-        </select>
-        <select value={newType} onChange={(e) => setNewType(e.target.value as TaskType)}>
+        </Select>
+        <Select value={newType} onChange={(e) => setNewType(e.target.value as TaskType)} className="w-auto">
           <option value="normal">Normal</option>
           <option value="ad_hoc">Ad-hoc</option>
-        </select>
-        <select value={newPriority} onChange={(e) => setNewPriority(e.target.value as TaskPriority)}>
+        </Select>
+        <Select
+          value={newPriority}
+          onChange={(e) => setNewPriority(e.target.value as TaskPriority)}
+          className="w-auto"
+        >
           <option value="normal">Normal</option>
           <option value="expedite">Expedite</option>
-        </select>
-        <button className="timer-btn timer-btn--start" type="submit">
+        </Select>
+        <Button variant="primary" type="submit">
           + Add task
-        </button>
+        </Button>
       </form>
-      {lanes.map(({ key, label, tasks: laneTasks }) => (
-        <SwimLane
-          key={key}
-          label={label}
-          tasks={laneTasks}
-          openEntries={openEntries}
-          onTimerChange={load}
-          onDrop={handleDrop}
-          draggingTask={draggingTask}
-          onDragStart={setDraggingTask}
-        />
-      ))}
+      <div className="space-y-6">
+        {lanes.map(({ key, label, tasks: laneTasks }) => (
+          <SwimLane
+            key={key}
+            label={label}
+            tasks={laneTasks}
+            openEntries={openEntries}
+            onTimerChange={load}
+            onDrop={handleDrop}
+            draggingTask={draggingTask}
+            onDragStart={setDraggingTask}
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Task, TimeEntry } from "@/lib/types";
+import { Button } from "@/components/ui/Button";
 
 function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
@@ -10,6 +11,30 @@ function formatDuration(seconds: number): string {
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
   return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
+}
+
+function PlayIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="5" y="5" width="14" height="14" rx="1.5" />
+    </svg>
+  );
 }
 
 interface TimerControlsProps {
@@ -48,41 +73,39 @@ export function TimerControls({ task, openEntries, onChange }: TimerControlsProp
   if (!ownEntry) {
     if (task.status !== "todo" && task.status !== "on_hold") return null;
     return (
-      <button
-        className="timer-btn timer-btn--start"
+      <Button
+        size="sm"
+        variant="primary"
         disabled={busy || runningElsewhere}
         title={runningElsewhere ? "Another timer is already running" : undefined}
         onClick={() => guard(() => api.startTimer(task.id))}
       >
-        ▶ Start
-      </button>
+        <PlayIcon /> Start
+      </Button>
     );
   }
 
   return (
-    <div className="timer-controls">
-      <span className="timer-display">{formatDuration(elapsed)}</span>
+    <div className="flex items-center gap-1.5">
+      <span className="font-mono text-xs tabular-nums text-gray-500">{formatDuration(elapsed)}</span>
       {ownEntry.status === "running" ? (
-        <button className="timer-btn" disabled={busy} onClick={() => guard(() => api.pauseTimer(ownEntry.id))}>
-          ⏸ Pause
-        </button>
+        <Button size="sm" variant="secondary" disabled={busy} onClick={() => guard(() => api.pauseTimer(ownEntry.id))}>
+          <PauseIcon /> Pause
+        </Button>
       ) : (
-        <button
-          className="timer-btn"
+        <Button
+          size="sm"
+          variant="primary"
           disabled={busy || runningElsewhere}
           title={runningElsewhere ? "Another timer is already running" : undefined}
           onClick={() => guard(() => api.resumeTimer(ownEntry.id))}
         >
-          ▶ Resume
-        </button>
+          <PlayIcon /> Resume
+        </Button>
       )}
-      <button
-        className="timer-btn timer-btn--stop"
-        disabled={busy}
-        onClick={() => guard(() => api.stopTimer(ownEntry.id))}
-      >
-        ■ Stop
-      </button>
+      <Button size="sm" variant="danger" disabled={busy} onClick={() => guard(() => api.stopTimer(ownEntry.id))}>
+        <StopIcon /> Stop
+      </Button>
     </div>
   );
 }
