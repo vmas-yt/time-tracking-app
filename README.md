@@ -43,6 +43,11 @@ npm run dev                      # http://localhost:3000
 The first account you register becomes an admin, so you can immediately
 configure the board's swim-lane grouping and custom fields from `/admin`.
 
+## Deploying it live
+
+See [`DEPLOY.md`](DEPLOY.md) — a `render.yaml` blueprint deploys the
+backend, frontend, and a free Postgres database to Render in one click.
+
 ## Domain model
 
 `User` (role + manager hierarchy) — `Project` (optional) — `Task` (type,
