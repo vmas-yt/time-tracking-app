@@ -5,28 +5,33 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Task, TimeEntry, TimerStatus, User
+from app.models import AuditAction, Task, TaskStatus, TimeEntry, TimerStatus, User
 from app.schemas import TimeEntryRead
+from app.services.tasks import record_audit, record_status_event
+from app.services.timer import (
+    elapsed_seconds,
+    open_entries_for_user,
+    open_entry_for_task,
+    pause_entry,
+    resume_entry,
+    running_entry_for_user,
+    stop_entry,
+)
 
 router = APIRouter(prefix="/time-entries", tags=["time-entries"])
 
 
 def _serialize(entry: TimeEntry) -> TimeEntryRead:
-    elapsed = entry.accumulated_seconds
-    if entry.status == TimerStatus.RUNNING and entry.last_resumed_at:
-        elapsed += (datetime.utcnow() - entry.last_resumed_at).total_seconds()
     data = TimeEntryRead.model_validate(entry)
-    data.elapsed_seconds = elapsed
+    data.elapsed_seconds = elapsed_seconds(entry)
     return data
 
 
-def _active_entry(db: Session, user_id: str) -> TimeEntry | None:
-    """A user may have at most one non-stopped timer at a time, across all tasks."""
-    return (
-        db.query(TimeEntry)
-        .filter(TimeEntry.user_id == user_id, TimeEntry.status != TimerStatus.STOPPED)
-        .first()
-    )
+def _get_owned_entry(db: Session, entry_id: str, user_id: str) -> TimeEntry:
+    entry = db.get(TimeEntry, entry_id)
+    if not entry or entry.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Time entry not found")
+    return entry
 
 
 @router.get("", response_model=list[TimeEntryRead])
@@ -41,10 +46,11 @@ def list_time_entries(
     return [_serialize(e) for e in query.order_by(TimeEntry.started_at.desc()).all()]
 
 
-@router.get("/active", response_model=TimeEntryRead | None)
-def get_active_timer(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    entry = _active_entry(db, current_user.id)
-    return _serialize(entry) if entry else None
+@router.get("/open", response_model=list[TimeEntryRead])
+def list_open_entries(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """A user's non-stopped entries: at most one RUNNING, plus any number
+    of PAUSED entries on tasks that are In Progress (paused) or On Hold."""
+    return [_serialize(e) for e in open_entries_for_user(db, current_user.id)]
 
 
 @router.post("/start", response_model=TimeEntryRead, status_code=201)
@@ -54,10 +60,17 @@ def start_timer(
     task = db.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    if _active_entry(db, current_user.id):
+    if task.status not in (TaskStatus.TODO, TaskStatus.ON_HOLD):
         raise HTTPException(
-            status_code=409, detail="A timer is already running or paused for this user"
+            status_code=409, detail="Timer can only be started from 'To Do' or 'On Hold'"
         )
+    if open_entry_for_task(db, task_id) is not None:
+        raise HTTPException(
+            status_code=409, detail="This task already has an open timer; use resume instead"
+        )
+    if running_entry_for_user(db, current_user.id) is not None:
+        raise HTTPException(status_code=409, detail="You already have a timer running on another task")
+
     now = datetime.utcnow()
     entry = TimeEntry(
         task_id=task_id,
@@ -68,6 +81,15 @@ def start_timer(
         accumulated_seconds=0.0,
     )
     db.add(entry)
+
+    from_status = task.status
+    task.status = TaskStatus.IN_PROGRESS
+    if task.first_in_progress_at is None:
+        task.first_in_progress_at = now
+    record_status_event(db, task, current_user, from_status, TaskStatus.IN_PROGRESS)
+    record_audit(db, task, current_user, AuditAction.STATUS_CHANGED, f"{from_status.value} -> in_progress")
+    record_audit(db, task, current_user, AuditAction.TIMER_STARTED, "Timer started")
+
     db.commit()
     db.refresh(entry)
     return _serialize(entry)
@@ -80,10 +102,8 @@ def pause_timer(
     entry = _get_owned_entry(db, entry_id, current_user.id)
     if entry.status != TimerStatus.RUNNING:
         raise HTTPException(status_code=409, detail=f"Cannot pause a timer in '{entry.status.value}' state")
-    now = datetime.utcnow()
-    entry.accumulated_seconds += (now - entry.last_resumed_at).total_seconds()
-    entry.last_resumed_at = None
-    entry.status = TimerStatus.PAUSED
+    pause_entry(entry)
+    record_audit(db, entry.task, current_user, AuditAction.TIMER_PAUSED, "Timer paused")
     db.commit()
     db.refresh(entry)
     return _serialize(entry)
@@ -96,8 +116,23 @@ def resume_timer(
     entry = _get_owned_entry(db, entry_id, current_user.id)
     if entry.status != TimerStatus.PAUSED:
         raise HTTPException(status_code=409, detail=f"Cannot resume a timer in '{entry.status.value}' state")
-    entry.last_resumed_at = datetime.utcnow()
-    entry.status = TimerStatus.RUNNING
+    other_running = running_entry_for_user(db, current_user.id)
+    if other_running is not None and other_running.id != entry.id:
+        raise HTTPException(status_code=409, detail="You already have a timer running on another task")
+
+    task = entry.task
+    if task.status == TaskStatus.ON_HOLD:
+        from_status = task.status
+        task.status = TaskStatus.IN_PROGRESS
+        record_status_event(db, task, current_user, from_status, TaskStatus.IN_PROGRESS)
+        record_audit(db, task, current_user, AuditAction.STATUS_CHANGED, "on_hold -> in_progress")
+    elif task.status != TaskStatus.IN_PROGRESS:
+        raise HTTPException(
+            status_code=409, detail=f"Cannot resume a timer while the task is '{task.status.value}'"
+        )
+
+    resume_entry(entry)
+    record_audit(db, task, current_user, AuditAction.TIMER_RESUMED, "Timer resumed")
     db.commit()
     db.refresh(entry)
     return _serialize(entry)
@@ -110,19 +145,18 @@ def stop_timer(
     entry = _get_owned_entry(db, entry_id, current_user.id)
     if entry.status == TimerStatus.STOPPED:
         raise HTTPException(status_code=409, detail="Timer is already stopped")
+
+    stop_entry(entry)
+
+    task = entry.task
+    from_status = task.status
     now = datetime.utcnow()
-    if entry.status == TimerStatus.RUNNING and entry.last_resumed_at:
-        entry.accumulated_seconds += (now - entry.last_resumed_at).total_seconds()
-    entry.last_resumed_at = None
-    entry.status = TimerStatus.STOPPED
-    entry.ended_at = now
+    task.status = TaskStatus.COMPLETED
+    task.completed_at = now
+    record_status_event(db, task, current_user, from_status, TaskStatus.COMPLETED)
+    record_audit(db, task, current_user, AuditAction.STATUS_CHANGED, f"{from_status.value} -> completed")
+    record_audit(db, task, current_user, AuditAction.TIMER_STOPPED, "Timer stopped; task completed")
+
     db.commit()
     db.refresh(entry)
     return _serialize(entry)
-
-
-def _get_owned_entry(db: Session, entry_id: str, user_id: str) -> TimeEntry:
-    entry = db.get(TimeEntry, entry_id)
-    if not entry or entry.user_id != user_id:
-        raise HTTPException(status_code=404, detail="Time entry not found")
-    return entry

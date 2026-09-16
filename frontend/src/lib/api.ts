@@ -1,4 +1,25 @@
-import type { Project, Task, TaskStatus, TimeEntry, User } from "./types";
+import type {
+  AuditEntry,
+  BoardConfig,
+  Comment,
+  CumulativeFlowPoint,
+  CustomField,
+  CustomFieldType,
+  CycleTimePoint,
+  LeadTimePoint,
+  Project,
+  ReminderCandidate,
+  SwimlaneField,
+  Task,
+  TaskCategory,
+  TaskPriority,
+  TaskStatus,
+  TaskType,
+  ThroughputBucket,
+  TimeEntry,
+  User,
+  UserRole,
+} from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -39,22 +60,54 @@ export const api = {
     }),
   me: () => request<User>("/users/me"),
   listUsers: () => request<User[]>("/users"),
+  updateUser: (userId: string, input: { role?: UserRole; manager_id?: string | null }) =>
+    request<User>(`/users/${userId}`, { method: "PATCH", body: JSON.stringify(input) }),
 
   listProjects: () => request<Project[]>("/projects"),
   createProject: (name: string, description?: string) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify({ name, description }) }),
 
-  listTasks: (projectId?: string) =>
-    request<Task[]>(`/tasks${projectId ? `?project_id=${projectId}` : ""}`),
-  createTask: (input: { title: string; project_id: string; description?: string }) =>
-    request<Task>("/tasks", { method: "POST", body: JSON.stringify(input) }),
-  updateTaskStatus: (taskId: string, status: TaskStatus, position: number) =>
-    request<Task>(`/tasks/${taskId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status, position }),
-    }),
+  listTasks: (params?: { projectId?: string; assigneeId?: string; status?: TaskStatus }) => {
+    const query = new URLSearchParams();
+    if (params?.projectId) query.set("project_id", params.projectId);
+    if (params?.assigneeId) query.set("assignee_id", params.assigneeId);
+    if (params?.status) query.set("status_filter", params.status);
+    const qs = query.toString();
+    return request<Task[]>(`/tasks${qs ? `?${qs}` : ""}`);
+  },
+  createTask: (input: {
+    title: string;
+    project_id?: string | null;
+    description?: string;
+    task_type?: TaskType;
+    category: TaskCategory;
+    category_other_text?: string;
+    priority?: TaskPriority;
+    assignee_id?: string | null;
+  }) => request<Task>("/tasks", { method: "POST", body: JSON.stringify(input) }),
+  getTask: (taskId: string) => request<Task>(`/tasks/${taskId}`),
+  updateTask: (
+    taskId: string,
+    input: Partial<{
+      title: string;
+      description: string;
+      assignee_id: string | null;
+      category: TaskCategory;
+      category_other_text: string;
+      priority: TaskPriority;
+      position: number;
+      status: TaskStatus;
+      custom_values: Record<string, string>;
+    }>
+  ) => request<Task>(`/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(input) }),
+  deleteTask: (taskId: string) => request<void>(`/tasks/${taskId}`, { method: "DELETE" }),
 
-  getActiveTimer: () => request<TimeEntry | null>("/time-entries/active"),
+  listComments: (taskId: string) => request<Comment[]>(`/tasks/${taskId}/comments`),
+  addComment: (taskId: string, body: string) =>
+    request<Comment>(`/tasks/${taskId}/comments`, { method: "POST", body: JSON.stringify({ body }) }),
+  listAudit: (taskId: string) => request<AuditEntry[]>(`/tasks/${taskId}/audit`),
+
+  listOpenTimers: () => request<TimeEntry[]>("/time-entries/open"),
   startTimer: (taskId: string) =>
     request<TimeEntry>(`/time-entries/start?task_id=${taskId}`, { method: "POST" }),
   pauseTimer: (entryId: string) =>
@@ -63,4 +116,26 @@ export const api = {
     request<TimeEntry>(`/time-entries/${entryId}/resume`, { method: "POST" }),
   stopTimer: (entryId: string) =>
     request<TimeEntry>(`/time-entries/${entryId}/stop`, { method: "POST" }),
+
+  getBoardConfig: () => request<BoardConfig>("/admin/board-config"),
+  updateBoardConfig: (swimlane_field: SwimlaneField) =>
+    request<BoardConfig>("/admin/board-config", {
+      method: "PATCH",
+      body: JSON.stringify({ swimlane_field }),
+    }),
+  listCustomFields: () => request<CustomField[]>("/admin/custom-fields"),
+  createCustomField: (input: { name: string; field_type: CustomFieldType; options?: string[] }) =>
+    request<CustomField>("/admin/custom-fields", { method: "POST", body: JSON.stringify(input) }),
+  deleteCustomField: (fieldId: string) =>
+    request<void>(`/admin/custom-fields/${fieldId}`, { method: "DELETE" }),
+
+  reportCycleTime: () => request<CycleTimePoint[]>("/reports/cycle-time"),
+  reportControlChart: () => request<CycleTimePoint[]>("/reports/control-chart"),
+  reportLeadTime: () => request<LeadTimePoint[]>("/reports/lead-time"),
+  reportThroughput: (interval: "day" | "week" = "day") =>
+    request<ThroughputBucket[]>(`/reports/throughput?interval=${interval}`),
+  reportCumulativeFlow: (days = 30) =>
+    request<CumulativeFlowPoint[]>(`/reports/cumulative-flow?days=${days}`),
+
+  reminderCandidates: (days = 1) => request<ReminderCandidate[]>(`/notifications/reminders?days=${days}`),
 };

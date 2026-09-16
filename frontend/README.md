@@ -14,19 +14,42 @@ Runs at `http://localhost:3000`. Requires the backend running at the URL in
 
 ## Structure
 
-- `src/app/` — routes: `/` (project list), `/login`, `/board?project=<id>`
-  (Kanban board), `/admin` (user list).
-- `src/components/` — `KanbanBoard`, `SwimLane` (grouped by assignee),
-  `TaskCard`, `TimerControls`.
+- `src/app/` — routes:
+  - `/` — project list
+  - `/login` — register/log in
+  - `/board?project=<id>` — Kanban board (project filter optional; tasks
+    are standalone by default per the PRD)
+  - `/tasks/[id]` — task detail: description, timer, comments, audit trail
+  - `/admin` — swim-lane grouping, custom fields, user role/manager
+    assignment
+  - `/reports` — control chart, cycle time, lead time, throughput,
+    cumulative flow diagram
+- `src/components/` — `KanbanBoard`, `SwimLane` (grouping is
+  admin-configurable — see `BoardConfig`), `TaskCard`, `TimerControls`,
+  `NavBar`.
 - `src/lib/api.ts` — thin fetch wrapper against the FastAPI backend, JWT
   stored in `localStorage`.
+- `src/lib/types.ts` — mirrors the backend's Pydantic schemas.
 
-The Kanban board groups tasks into swim lanes by assignee, with columns for
-each task status (`backlog`, `todo`, `in_progress`, `in_review`, `done`).
-Drag a card to a new column to change its status. Each task card has inline
-timer controls reflecting the backend's timer state machine — only one
-timer can be active per user at a time, and controls only offer actions
-valid for the entry's current state.
+The Kanban board has 5 fixed columns (`backlog`, `todo`, `in_progress`,
+`on_hold`, `completed`) and swim lanes grouped by whatever field the admin
+picked (team member, task type, category, or priority). Dragging a card
+only works for the manually-reachable columns (`backlog`/`todo`/`on_hold`)
+— `in_progress` and `completed` are timer-only, per the backend's state
+machine, so those columns aren't drop targets. Each task card has inline
+timer controls that only ever offer actions valid for that task's current
+state (see `backend/README.md` for the exact rules).
+
+Charts on `/reports` use `recharts`, colored from the `dataviz` skill's
+validated categorical/status palette (see the `--series-*`/`--status-*`
+custom properties in `globals.css`).
+
+## Known follow-up
+
+`npm audit` reports moderate/high advisories in `postcss`, a build-time
+transitive dependency of Next.js with no runtime exposure in this app.
+Clearing them requires the Next.js 16 major upgrade (React 19); left for a
+deliberate follow-up rather than bundled into this scaffold.
 
 ## Known follow-up
 

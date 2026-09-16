@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { TimeEntry } from "@/lib/types";
+import type { Task, TimeEntry } from "@/lib/types";
 
 function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
@@ -13,28 +13,31 @@ function formatDuration(seconds: number): string {
 }
 
 interface TimerControlsProps {
-  taskId: string;
-  activeEntry: TimeEntry | null;
-  onChange: (entry: TimeEntry | null) => void;
+  task: Task;
+  openEntries: TimeEntry[];
+  onChange: () => void;
 }
 
-export function TimerControls({ taskId, activeEntry, onChange }: TimerControlsProps) {
-  const [elapsed, setElapsed] = useState(activeEntry?.elapsed_seconds ?? 0);
+export function TimerControls({ task, openEntries, onChange }: TimerControlsProps) {
+  const ownEntry = openEntries.find((e) => e.task_id === task.id) ?? null;
+  const runningElsewhere = openEntries.some((e) => e.status === "running" && e.task_id !== task.id);
+
+  const [elapsed, setElapsed] = useState(ownEntry?.elapsed_seconds ?? 0);
   const [busy, setBusy] = useState(false);
 
-  const isForThisTask = activeEntry?.task_id === taskId;
-
   useEffect(() => {
-    setElapsed(activeEntry?.elapsed_seconds ?? 0);
-    if (!activeEntry || activeEntry.status !== "running") return;
+    setElapsed(ownEntry?.elapsed_seconds ?? 0);
+    if (!ownEntry || ownEntry.status !== "running") return;
     const id = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(id);
-  }, [activeEntry]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownEntry?.id, ownEntry?.status, ownEntry?.elapsed_seconds]);
 
-  const guard = async (fn: () => Promise<TimeEntry | null>) => {
+  const guard = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try {
-      onChange(await fn());
+      await fn();
+      onChange();
     } catch (err) {
       console.error(err);
     } finally {
@@ -42,38 +45,41 @@ export function TimerControls({ taskId, activeEntry, onChange }: TimerControlsPr
     }
   };
 
-  if (!activeEntry && !isForThisTask) {
+  if (!ownEntry) {
+    if (task.status !== "todo" && task.status !== "on_hold") return null;
     return (
       <button
         className="timer-btn timer-btn--start"
-        disabled={busy || (!!activeEntry && !isForThisTask)}
-        onClick={() => guard(() => api.startTimer(taskId))}
+        disabled={busy || runningElsewhere}
+        title={runningElsewhere ? "Another timer is already running" : undefined}
+        onClick={() => guard(() => api.startTimer(task.id))}
       >
         ▶ Start
       </button>
     );
   }
 
-  if (!isForThisTask) {
-    return <span className="timer-disabled">Another timer is running</span>;
-  }
-
   return (
     <div className="timer-controls">
       <span className="timer-display">{formatDuration(elapsed)}</span>
-      {activeEntry!.status === "running" ? (
-        <button className="timer-btn" disabled={busy} onClick={() => guard(() => api.pauseTimer(activeEntry!.id))}>
+      {ownEntry.status === "running" ? (
+        <button className="timer-btn" disabled={busy} onClick={() => guard(() => api.pauseTimer(ownEntry.id))}>
           ⏸ Pause
         </button>
       ) : (
-        <button className="timer-btn" disabled={busy} onClick={() => guard(() => api.resumeTimer(activeEntry!.id))}>
+        <button
+          className="timer-btn"
+          disabled={busy || runningElsewhere}
+          title={runningElsewhere ? "Another timer is already running" : undefined}
+          onClick={() => guard(() => api.resumeTimer(ownEntry.id))}
+        >
           ▶ Resume
         </button>
       )}
       <button
         className="timer-btn timer-btn--stop"
         disabled={busy}
-        onClick={() => guard(async () => { await api.stopTimer(activeEntry!.id); return null; })}
+        onClick={() => guard(() => api.stopTimer(ownEntry.id))}
       >
         ■ Stop
       </button>
