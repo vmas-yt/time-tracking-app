@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.db
+.pytest_cache/
+.env
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+next-env.d.ts
+.env.local
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+*.swp
