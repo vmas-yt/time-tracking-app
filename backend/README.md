@@ -83,6 +83,50 @@ Combined with the task's status, per the PRD:
 See `backend/tests/test_timer_state_machine.py` for the full behavior
 contract, including every rejected transition.
 
+## Authorization
+
+- `services/authz.py` has two checks, applied consistently across every
+  task-scoped read/write endpoint (not just comments/audit):
+  - `assert_can_view_task` (read access) — the task's assignee, its creator,
+    the assignee's line manager, or an admin. Used by `GET /tasks/{id}`,
+    `GET/POST /tasks/{id}/comments`, and `GET /tasks/{id}/audit`.
+  - `assert_can_edit_task` (write access) — the task's assignee, its
+    creator, or an admin. Deliberately **excludes** the manager: per the
+    PRD, managers review time/tasks, they don't edit a report's tasks or
+    control their timer. Used by `PATCH`/`DELETE /tasks/{id}` and every
+    `/time-entries/start|{id}/pause|{id}/resume|{id}/stop` endpoint (the
+    latter checked against the entry's task, not just entry ownership, so a
+    task reassigned mid-timer is still governed by its current owner).
+  - `GET /tasks` additionally scopes its results for non-admins to tasks
+    they can view — an employee's board never lists a peer's tasks.
+- `GET /tasks?manager_id={id}` returns every task assigned to someone whose
+  `manager_id` is `{id}` — the "my team" board a line manager needs in one
+  call, instead of one `assignee_id` lookup per direct report.
+
+## Data-loss guard on delete
+
+`DELETE /tasks/{id}` returns **409** if the task has any `TimeEntry` rows,
+instead of silently cascading the delete through its time entries, audit
+trail, and status events (which would corrupt reporting numbers for a task
+that had real work logged against it). Tasks with no logged time can still
+be deleted outright — there's nothing to lose.
+
+## Concurrency guard on the timer invariants
+
+The two PRD invariants — "only one open (non-stopped) `TimeEntry` per task"
+and "only one `RUNNING` entry per user" — are enforced twice:
+1. Query-then-check in `app/services/timer.py` (`open_entry_for_task`,
+   `running_entry_for_user`), which is what most requests hit and what
+   produces the friendly 409 messages.
+2. A DB-level partial unique index on `time_entries` (see
+   `TimeEntry.__table_args__` in `app/models.py`) as a backstop, so two
+   genuinely concurrent requests (double-click, two tabs) can't both slip
+   past check #1 and insert/update into two open or two running rows. The
+   routers catch the resulting `IntegrityError` and return 409 instead of
+   crashing. See `backend/tests/test_timer_db_constraints.py`, which writes
+   straight to the ORM (bypassing the app-level check) to prove the index
+   itself rejects the conflicting row.
+
 ## Reporting
 
 `GET /reports/{cycle-time,control-chart,lead-time,throughput,cumulative-flow}`

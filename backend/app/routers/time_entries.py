@@ -1,12 +1,14 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import AuditAction, Task, TaskStatus, TimeEntry, TimerStatus, User
 from app.schemas import TimeEntryRead
+from app.services.authz import assert_can_edit_task
 from app.services.tasks import record_audit, record_status_event
 from app.services.timer import (
     elapsed_seconds,
@@ -60,6 +62,7 @@ def start_timer(
     task = db.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    assert_can_edit_task(current_user, task)
     if task.status not in (TaskStatus.TODO, TaskStatus.ON_HOLD):
         raise HTTPException(
             status_code=409, detail="Timer can only be started from 'To Do' or 'On Hold'"
@@ -90,7 +93,14 @@ def start_timer(
     record_audit(db, task, current_user, AuditAction.STATUS_CHANGED, f"{from_status.value} -> in_progress")
     record_audit(db, task, current_user, AuditAction.TIMER_STARTED, "Timer started")
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This task already has an open timer, or you already have a timer running elsewhere",
+        )
     db.refresh(entry)
     return _serialize(entry)
 
@@ -100,6 +110,7 @@ def pause_timer(
     entry_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     entry = _get_owned_entry(db, entry_id, current_user.id)
+    assert_can_edit_task(current_user, entry.task)
     if entry.status != TimerStatus.RUNNING:
         raise HTTPException(status_code=409, detail=f"Cannot pause a timer in '{entry.status.value}' state")
     pause_entry(entry)
@@ -114,6 +125,7 @@ def resume_timer(
     entry_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     entry = _get_owned_entry(db, entry_id, current_user.id)
+    assert_can_edit_task(current_user, entry.task)
     if entry.status != TimerStatus.PAUSED:
         raise HTTPException(status_code=409, detail=f"Cannot resume a timer in '{entry.status.value}' state")
     other_running = running_entry_for_user(db, current_user.id)
@@ -133,7 +145,11 @@ def resume_timer(
 
     resume_entry(entry)
     record_audit(db, task, current_user, AuditAction.TIMER_RESUMED, "Timer resumed")
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="You already have a timer running on another task")
     db.refresh(entry)
     return _serialize(entry)
 
@@ -143,6 +159,7 @@ def stop_timer(
     entry_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     entry = _get_owned_entry(db, entry_id, current_user.id)
+    assert_can_edit_task(current_user, entry.task)
     if entry.status == TimerStatus.STOPPED:
         raise HTTPException(status_code=409, detail="Timer is already stopped")
 

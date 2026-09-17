@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -11,7 +12,9 @@ from app.models import (
     TaskComment,
     TaskCustomValue,
     TaskStatus,
+    TimeEntry,
     User,
+    UserRole,
 )
 from app.schemas import (
     AuditEntryRead,
@@ -21,7 +24,7 @@ from app.schemas import (
     TaskRead,
     TaskUpdate,
 )
-from app.services.authz import assert_can_view_task
+from app.services.authz import assert_can_edit_task, assert_can_view_task
 from app.services.tasks import change_status, record_audit, record_status_event
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -50,9 +53,18 @@ def list_tasks(
     project_id: str | None = None,
     assignee_id: str | None = None,
     status_filter: TaskStatus | None = None,
+    manager_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """List tasks for the board.
+
+    `manager_id` returns tasks assigned to anyone whose `manager_id` equals
+    the given user — the "my team" board a line manager needs, without one
+    round-trip per direct report. Non-admins are additionally restricted to
+    tasks they can view (assignee, creator, or their assignee's manager),
+    matching `services/authz.assert_can_view_task` used elsewhere.
+    """
     query = db.query(Task)
     if project_id:
         query = query.filter(Task.project_id == project_id)
@@ -60,6 +72,16 @@ def list_tasks(
         query = query.filter(Task.assignee_id == assignee_id)
     if status_filter:
         query = query.filter(Task.status == status_filter)
+    if manager_id:
+        query = query.filter(Task.assignee.has(User.manager_id == manager_id))
+    if current_user.role != UserRole.ADMIN:
+        query = query.filter(
+            or_(
+                Task.assignee_id == current_user.id,
+                Task.created_by_id == current_user.id,
+                Task.assignee.has(User.manager_id == current_user.id),
+            )
+        )
     tasks = query.order_by(Task.status, Task.position).all()
     return [_serialize(db, t) for t in tasks]
 
@@ -87,6 +109,7 @@ def create_task(
 @router.get("/{task_id}", response_model=TaskRead)
 def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     task = _get_task_or_404(db, task_id)
+    assert_can_view_task(current_user, task)
     return _serialize(db, task)
 
 
@@ -98,6 +121,7 @@ def update_task(
     current_user: User = Depends(get_current_user),
 ):
     task = _get_task_or_404(db, task_id)
+    assert_can_edit_task(current_user, task)
     updates = task_in.model_dump(exclude_unset=True, exclude={"status", "custom_values"})
 
     if updates:
@@ -140,6 +164,16 @@ def update_task(
 @router.delete("/{task_id}", status_code=204)
 def delete_task(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     task = _get_task_or_404(db, task_id)
+    assert_can_edit_task(current_user, task)
+    has_logged_time = db.query(TimeEntry).filter(TimeEntry.task_id == task_id).first() is not None
+    if has_logged_time:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Cannot delete a task with logged time entries — it would erase the "
+                "audit trail and reporting history. Move it to a terminal status instead."
+            ),
+        )
     db.delete(task)
     db.commit()
 

@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, String, Text
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -185,6 +185,29 @@ class TimeEntry(Base):
     last_resumed_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
     accumulated_seconds: Mapped[float] = mapped_column(Float, default=0.0)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # DB-level backstop for the two PRD invariants ("only one open entry per
+    # task"; "only one RUNNING timer per user") on top of the query-then-check
+    # guards in app/services/timer.py, so two truly concurrent requests can't
+    # both slip past the application check and create two open/running rows.
+    # SQLAlchemy persists the Python Enum member's *name* (e.g. "RUNNING"),
+    # not its lowercase `.value`, hence the uppercase literals here.
+    __table_args__ = (
+        Index(
+            "uq_time_entries_open_per_task",
+            "task_id",
+            unique=True,
+            sqlite_where=text("status != 'STOPPED'"),
+            postgresql_where=text("status != 'STOPPED'"),
+        ),
+        Index(
+            "uq_time_entries_running_per_user",
+            "user_id",
+            unique=True,
+            sqlite_where=text("status = 'RUNNING'"),
+            postgresql_where=text("status = 'RUNNING'"),
+        ),
+    )
 
     task: Mapped["Task"] = relationship(back_populates="time_entries")
     user: Mapped["User"] = relationship(back_populates="time_entries")
