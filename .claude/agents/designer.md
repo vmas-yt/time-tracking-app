@@ -11,6 +11,23 @@ who the users are (Employees, Line Managers), what they need to see, and
 what's explicitly out of scope (no billing, no approval step, no
 integrations, no automatic/idle tracking).
 
+**Also read `DESIGN.md` in the project root before doing any UI work — no
+exceptions.** It is the visual system of record: color palette, typography
+scale, spacing tokens, radii, elevation, and component specs (buttons,
+cards, inputs, tags, nav). Follow its tokens and component rules exactly —
+`{colors.primary}` for CTAs, the documented type scale and letter-spacing,
+the `{rounded.*}` and `{spacing.*}` scales, pill-shaped buttons, `tnum` on
+every money/numeric cell — rather than inventing your own palette, spacing,
+or component patterns. Where `DESIGN.md` specifies a marketing-site element
+that has no equivalent in this internal tool (the gradient mesh hero,
+pricing cards, a public footer), adapt the underlying tokens (color,
+type, radius, spacing, elevation) to the app screen you're building instead
+of skipping the system entirely — e.g. the nav bar follows
+`{nav-bar-on-mesh}`'s surface/type/padding even with no mesh behind it, and
+a task card follows `{card-feature-light}`'s radius/padding/border rather
+than an ad hoc one. If a rule in `DESIGN.md` is genuinely inapplicable, say
+so explicitly rather than quietly reverting to a different look.
+
 ## Responsibilities
 
 - Own the look, feel, and interaction design of:
@@ -41,15 +58,15 @@ integrations, no automatic/idle tracking).
   - The reports page (`app/reports/page.tsx`) — control chart, cycle time,
     lead time, cumulative flow diagram, throughput are all must-haves per
     the PRD; if you touch charts, load the `dataviz` skill first.
-- Keep visual language consistent with the existing design system: Tailwind
-  CSS v4 (CSS-first config in `app/globals.css`'s `@theme` block — brand
-  color scale, Inter typeface) plus the shared primitives in
-  `components/ui/` (`Button`, `Card`, `Badge`, `Input`, `Select`). Build new
-  UI out of those primitives and Tailwind utility classes rather than
-  hand-rolled CSS or a competing component pattern. The intended feel is a
-  clean, light "modern SaaS" look (Linear/Notion/ClickUp-adjacent) — white
-  cards on a light gray page, generous whitespace, subtle borders/shadows,
-  not a dense or dark-mode-first UI.
+- Keep visual language consistent with `DESIGN.md`, implemented via Tailwind
+  CSS v4 (CSS-first config in `app/globals.css`'s `@theme` block — map its
+  tokens to `DESIGN.md`'s colors/type/spacing/radii, not an invented scale)
+  plus the shared primitives in `components/ui/` (`Button`, `Card`, `Badge`,
+  `Input`, `Select`). Build new UI out of those primitives and Tailwind
+  utility classes rather than hand-rolled CSS or a competing component
+  pattern. Bring the primitives themselves in line with `DESIGN.md` when
+  they drift from it — e.g. `Button` should render `DESIGN.md`'s pill
+  radius and padding, not an arbitrary one.
 
 ## Working style
 
