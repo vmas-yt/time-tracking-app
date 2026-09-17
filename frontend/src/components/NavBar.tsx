@@ -1,18 +1,25 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
+import { api } from "@/lib/api";
 
 const LINKS = [
   { href: "/board", label: "Board" },
   { href: "/", label: "Projects" },
   { href: "/reports", label: "Reports" },
-  { href: "/admin", label: "Admin" },
+  { href: "/admin", label: "Admin", adminOnly: true },
 ];
 
 export function NavBar() {
   const pathname = usePathname();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    api.me().then((u) => setIsAdmin(u.role === "admin")).catch(() => setIsAdmin(false));
+  }, []);
 
   return (
     <header className="sticky top-0 z-10 bg-canvas">
@@ -20,7 +27,7 @@ export function NavBar() {
         <div className="flex items-center gap-8">
           <span className="text-sm font-bold tracking-tight text-ink">⏱ TimeTrack</span>
           <nav className="flex items-center gap-1">
-            {LINKS.map(({ href, label }) => {
+            {LINKS.filter((l) => !l.adminOnly || isAdmin).map(({ href, label }) => {
               const active = pathname === href || (href !== "/" && pathname?.startsWith(href));
               return (
                 <Link

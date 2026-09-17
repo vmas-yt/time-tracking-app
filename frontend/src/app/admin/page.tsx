@@ -16,6 +16,8 @@ export default function AdminPage() {
   const [newFieldName, setNewFieldName] = useState("");
   const [newFieldType, setNewFieldType] = useState<CustomFieldType>("text");
   const [error, setError] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [meError, setMeError] = useState<string | null>(null);
 
   const load = () => {
     api.listUsers().then(setUsers).catch((e) => setError(e.message));
@@ -23,7 +25,23 @@ export default function AdminPage() {
     api.listCustomFields().then(setCustomFields).catch(console.error);
   };
 
+  useEffect(() => {
+    api.me().then(setCurrentUser).catch((e) => setMeError(e.message));
+  }, []);
   useEffect(load, []);
+
+  if (!currentUser && !meError) {
+    return <main className="mx-auto max-w-6xl px-6 py-8 text-sm text-mute">Loading…</main>;
+  }
+  if (!currentUser || currentUser.role !== "admin") {
+    return (
+      <main className="mx-auto max-w-6xl px-6 py-8">
+        <p className="rounded-xl bg-negative-bg px-4 py-3 text-sm text-canvas">
+          Admin access required — log in as an admin to manage swim lanes, custom fields, and user roles.
+        </p>
+      </main>
+    );
+  }
 
   const handleSwimlaneChange = async (value: SwimlaneField) => {
     try {
