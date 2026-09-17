@@ -121,6 +121,14 @@ export function canStart(
 ): { ok: true } | { ok: false; reason: string } {
   const task = state.tasks.find((t) => t.id === taskId);
   if (!task) return { ok: false, reason: "Task not found" };
+  // Tightened to assignee-only (backend design doc §9.1): starting a timer
+  // always attributes the new entry to whoever clicks Start, so unlike
+  // canEditTask (assignee/creator/admin), a task's creator or an admin must
+  // NOT see an enabled Start button on someone else's task — the backend
+  // 403s them too, and showing it here would only invite a doomed request.
+  if (currentUserId !== task.assignee_id) {
+    return { ok: false, reason: "Only the task's assignee can start its timer." };
+  }
   if (task.status !== "todo" && task.status !== "on_hold") {
     return { ok: false, reason: "Start only works from To Do or On Hold." };
   }
