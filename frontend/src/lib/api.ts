@@ -71,15 +71,36 @@ export const api = {
       return res.json() as Promise<{ access_token: string }>;
     });
   },
-  register: (email: string, full_name: string, password: string) =>
-    request<User>("/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email, full_name, password }),
-    }),
   me: () => request<User>("/users/me"),
-  listUsers: () => request<User[]>("/users"),
-  updateUser: (userId: string, input: { role?: UserRole; manager_id?: string | null }) =>
-    request<User>(`/users/${userId}`, { method: "PATCH", body: JSON.stringify(input) }),
+  listUsers: (params?: { includeInactive?: boolean }) => {
+    const query = new URLSearchParams();
+    if (params?.includeInactive) query.set("include_inactive", "true");
+    const qs = query.toString();
+    return request<User[]>(`/users${qs ? `?${qs}` : ""}`);
+  },
+  createUser: (input: {
+    email: string;
+    full_name: string;
+    role?: UserRole;
+    manager_id?: string | null;
+    password: string;
+  }) => request<User>("/users", { method: "POST", body: JSON.stringify(input) }),
+  updateUser: (
+    userId: string,
+    input: Partial<{
+      full_name: string;
+      email: string;
+      role: UserRole;
+      manager_id: string | null;
+      is_active: boolean;
+    }>
+  ) => request<User>(`/users/${userId}`, { method: "PATCH", body: JSON.stringify(input) }),
+  resetPassword: (userId: string, newPassword: string) =>
+    request<void>(`/users/${userId}/reset-password`, {
+      method: "POST",
+      body: JSON.stringify({ new_password: newPassword }),
+    }),
+  deactivateUser: (userId: string) => request<User>(`/users/${userId}`, { method: "DELETE" }),
 
   listProjects: () => request<Project[]>("/projects"),
   getProject: (projectId: string) => request<Project>(`/projects/${projectId}`),

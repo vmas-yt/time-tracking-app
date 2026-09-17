@@ -28,6 +28,7 @@ export interface User {
   full_name: string;
   role: UserRole;
   manager_id: string | null;
+  is_active: boolean;
   created_at: string;
 }
 

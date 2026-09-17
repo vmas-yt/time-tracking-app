@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { AuthGate } from "@/components/AuthGate";
 import { NavBar } from "@/components/NavBar";
 import "./globals.css";
 
@@ -14,8 +15,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={inter.variable}>
       <body className="font-sans antialiased">
-        <NavBar />
-        {children}
+        <AuthGate>
+          <NavBar />
+          {children}
+        </AuthGate>
       </body>
     </html>
   );

@@ -12,7 +12,7 @@ import { Select } from "@/components/ui/Input";
 import { validDropTargets } from "@/board/engine";
 import { groupIntoLanes } from "@/board/lanes";
 import { useBoard } from "@/board/store";
-import { NewTaskForm } from "./NewTaskForm";
+import { AddTaskPanel } from "./AddTaskPanel";
 import { SwimLane } from "./SwimLane";
 import { TaskDetailPanel } from "./TaskDetailPanel";
 import { Toast } from "./Toast";
@@ -145,13 +145,19 @@ export function BoardScreen() {
               ))}
             </Select>
           </label>
-          <Button variant="primary" onClick={() => setShowNewTask((v) => !v)}>
-            {showNewTask ? "Close" : "+ New task"}
+          <Button
+            variant="primary"
+            onClick={() => {
+              board.selectTask(null); // avoid stacking with an open task-detail panel
+              setShowNewTask(true);
+            }}
+          >
+            + Add task
           </Button>
         </div>
       </header>
 
-      {showNewTask && <NewTaskForm onDone={() => setShowNewTask(false)} />}
+      <AddTaskPanel open={showNewTask} onClose={() => setShowNewTask(false)} />
 
       {lanes.length === 0 ? (
         <Card className="px-6 py-12 text-center text-sm text-mute">

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import type { Task, TimeEntry, User } from "@/lib/types";
+import { useAuth } from "@/lib/auth";
+import type { Task, TimeEntry } from "@/lib/types";
 import { canEditTask as canEditTaskPure } from "./engine";
 
 export interface SessionToast {
@@ -19,15 +20,18 @@ interface UseTimerSessionOptions {
 }
 
 /**
- * Owns "who am I, what timers of mine are open, and can I mutate this
- * task" — the slice of board state that's the same whether you're looking
- * at the full Kanban board or a single task's detail page. Both
- * `board/store.tsx` (the board) and `app/tasks/[id]/page.tsx` (standalone
- * detail view) use this instead of duplicating fetch/guard/toast logic.
+ * Owns "what timers of mine are open, and can I mutate this task" — the
+ * slice of board state that's the same whether you're looking at the full
+ * Kanban board or a single task's detail page. Both `board/store.tsx` (the
+ * board) and `app/tasks/[id]/page.tsx` (standalone detail view) use this
+ * instead of duplicating fetch/guard/toast logic. "Who am I" itself comes
+ * from the shared `AuthContext` (`@/lib/auth`) rather than a redundant
+ * `api.me()` call here — `AuthGate` already guarantees a valid session by
+ * the time any page using this hook renders.
  */
 export function useTimerSession(options: UseTimerSessionOptions = {}) {
   const { onMutated } = options;
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { user: currentUser } = useAuth();
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [sessionError, setSessionError] = useState<string | null>(null);
@@ -50,9 +54,8 @@ export function useTimerSession(options: UseTimerSessionOptions = {}) {
       setSessionLoading(true);
       setSessionError(null);
       try {
-        const [me, openEntries] = await Promise.all([api.me(), api.listOpenTimers()]);
+        const openEntries = await api.listOpenTimers();
         if (cancelled) return;
-        setCurrentUser(me);
         setEntries(openEntries);
       } catch (err) {
         if (!cancelled) setSessionError(err instanceof Error ? err.message : "Could not load your session");
