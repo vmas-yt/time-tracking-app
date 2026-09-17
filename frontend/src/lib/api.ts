@@ -21,7 +21,12 @@ import type {
   UserRole,
 } from "./types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Render's `fromService`/`property: host` binding (used in render.yaml so the
+// deployed frontend always points at wherever the backend actually landed,
+// rather than a hardcoded hostname that breaks the moment Render assigns a
+// random suffix) yields a bare host with no scheme — add one if it's missing.
+const rawApiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_URL = /^https?:\/\//.test(rawApiUrl) ? rawApiUrl : `https://${rawApiUrl}`;
 
 // Thrown for any non-2xx response. Carries the HTTP status so callers can
 // distinguish "not authorized" (403) / "conflict" (409) from other failures
