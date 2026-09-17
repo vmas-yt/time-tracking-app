@@ -8,6 +8,7 @@ from app.core.security import hash_password
 from app.database import Base, get_db
 from app.main import app
 from app.models import User, UserRole
+from app.services.bootstrap import ensure_default_dropdown_options
 
 
 @pytest.fixture()
@@ -33,6 +34,20 @@ def client(db_engine):
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+
+    # `main.py`'s lifespan seeds default task_category/task_priority
+    # DropdownOption rows via `ensure_default_dropdown_options`, but (like
+    # `ensure_bootstrap_admin`, see the `auth_headers` fixture below) it runs
+    # against the real configured engine, not this in-memory test engine —
+    # so tests need to seed it directly, the same way they seed the
+    # bootstrap admin. Every task-creation test needs these rows present to
+    # pass `services/tasks.py::validate_dropdown_value`.
+    seed_db = TestingSessionLocal()
+    try:
+        ensure_default_dropdown_options(seed_db)
+    finally:
+        seed_db.close()
+
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

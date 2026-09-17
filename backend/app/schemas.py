@@ -6,9 +6,8 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, PlainSerializer, mo
 from app.models import (
     AuditAction,
     CustomFieldType,
+    DropdownOptionScope,
     SwimlaneField,
-    TaskCategory,
-    TaskPriority,
     TaskStatus,
     TaskType,
     TimerStatus,
@@ -107,19 +106,24 @@ class TaskBase(BaseModel):
     project_id: str | None = None
     assignee_id: str | None = None
     task_type: TaskType = TaskType.NORMAL
-    category: TaskCategory
+    # category/priority are plain, DB-validated strings now (see
+    # docs/design/custom-fields-admin-design.md §2.8) — the fixed-enum
+    # Pydantic type is gone; the valid set is enforced at the service layer
+    # (services/tasks.py::validate_dropdown_value) against live DropdownOption
+    # rows, not the OpenAPI schema.
+    category: str = Field(min_length=1)
     category_other_text: str | None = None
-    priority: TaskPriority = TaskPriority.NORMAL
+    priority: str = "normal"
 
     @model_validator(mode="after")
     def _validate_other_text(self):
-        if self.category == TaskCategory.OTHER and not self.category_other_text:
+        if self.category == "other" and not self.category_other_text:
             raise ValueError("category_other_text is required when category is 'other'")
         return self
 
 
 class TaskCreate(TaskBase):
-    pass
+    custom_values: dict[str, str] | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -128,10 +132,11 @@ class TaskUpdate(BaseModel):
 
     title: str | None = None
     description: str | None = None
+    project_id: str | None = None
     assignee_id: str | None = None
-    category: TaskCategory | None = None
+    category: str | None = None
     category_other_text: str | None = None
-    priority: TaskPriority | None = None
+    priority: str | None = None
     position: int | None = None
     status: TaskStatus | None = None
     custom_values: dict[str, str] | None = None
@@ -145,7 +150,9 @@ class TaskRead(TaskBase, UTCModel):
     created_at: UTCDatetime
     updated_at: UTCDatetime
     completed_at: UTCDatetime | None
+    archived_at: UTCDatetime | None = None
     custom_values: dict[str, str] = {}
+    total_logged_seconds: float = 0.0
 
 
 # ---- Comments & audit trail ---------------------------------------------------
@@ -187,7 +194,42 @@ class TimeEntryRead(UTCModel):
     elapsed_seconds: float = 0.0
 
 
-# ---- Custom fields & board config ---------------------------------------------
+# ---- Dropdown options & custom fields & board config ---------------------------
+
+
+class DropdownOptionRead(UTCModel):
+    id: str
+    scope: DropdownOptionScope
+    custom_field_id: str | None
+    value: str
+    label: str
+    is_builtin: bool
+    is_active: bool
+    position: int
+    created_at: UTCDatetime
+
+
+# The shape of one entry in CustomFieldRead.options. Distinguished by name
+# from DropdownOptionRead per the design doc's frontend contract (§1.4's
+# `CustomFieldOption` interface), but identical in fields today since a
+# custom field's options are just its DropdownOption rows.
+CustomFieldOptionRead = DropdownOptionRead
+
+
+class DropdownOptionCreate(BaseModel):
+    # `scope` is a plain string (not DropdownOptionScope) so an invalid value
+    # can be rejected with an explicit 400 in the router rather than a 422
+    # from Pydantic enum coercion (see docs/design/custom-fields-admin-design.md §2.7).
+    scope: str
+    custom_field_id: str | None = None
+    value: str
+    label: str | None = None
+
+
+class DropdownOptionUpdate(BaseModel):
+    label: str | None = None
+    is_active: bool | None = None
+    position: int | None = None
 
 
 class CustomFieldCreate(BaseModel):
@@ -200,7 +242,7 @@ class CustomFieldRead(UTCModel):
     id: str
     name: str
     field_type: CustomFieldType
-    options: list[str] | None = None
+    options: list[CustomFieldOptionRead] | None = None
     created_at: UTCDatetime
 
 

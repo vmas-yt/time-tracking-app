@@ -66,3 +66,38 @@ def test_admin_cannot_delete_project_with_tasks(client, auth_headers):
 
     # still there afterwards
     assert client.get(f"/projects/{project['id']}", headers=auth_headers).status_code == 200
+
+
+# ---- project_id validation & PATCH wiring (§3.4) ---------------------------
+
+
+def test_create_task_rejects_nonexistent_project_id(client, auth_headers):
+    resp = client.post(
+        "/tasks",
+        json={"title": "Bad project", "category": "meeting", "project_id": "does-not-exist"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+
+
+def test_patch_task_can_set_project_id(client, auth_headers, task_id):
+    project = client.post("/projects", json={"name": "Eta"}, headers=auth_headers).json()
+    resp = client.patch(f"/tasks/{task_id}", json={"project_id": project["id"]}, headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["project_id"] == project["id"]
+
+
+def test_patch_task_rejects_nonexistent_project_id(client, auth_headers, task_id):
+    resp = client.patch(
+        f"/tasks/{task_id}", json={"project_id": "does-not-exist"}, headers=auth_headers
+    )
+    assert resp.status_code == 400
+
+
+def test_patch_task_can_clear_project_id(client, auth_headers, task_id):
+    project = client.post("/projects", json={"name": "Theta"}, headers=auth_headers).json()
+    client.patch(f"/tasks/{task_id}", json={"project_id": project["id"]}, headers=auth_headers)
+
+    resp = client.patch(f"/tasks/{task_id}", json={"project_id": None}, headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["project_id"] is None

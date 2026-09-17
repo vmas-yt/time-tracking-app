@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -6,7 +8,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import (
     AuditAction,
-    CustomFieldDefinition,
+    DropdownOptionScope,
     Task,
     TaskAuditEntry,
     TaskComment,
@@ -24,8 +26,16 @@ from app.schemas import (
     TaskRead,
     TaskUpdate,
 )
-from app.services.authz import assert_can_edit_task, assert_can_view_task
-from app.services.tasks import change_status, record_audit, record_status_event
+from app.services.authz import assert_admin, assert_can_edit_task, assert_can_view_task
+from app.services.tasks import (
+    apply_custom_values,
+    change_status,
+    record_audit,
+    record_status_event,
+    total_logged_seconds,
+    validate_dropdown_value,
+    validate_project_exists,
+)
 from app.services.users import validate_assignee_active
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -39,6 +49,7 @@ def _custom_values_map(db: Session, task_id: str) -> dict[str, str]:
 def _serialize(db: Session, task: Task) -> TaskRead:
     data = TaskRead.model_validate(task)
     data.custom_values = _custom_values_map(db, task.id)
+    data.total_logged_seconds = total_logged_seconds(db, task)
     return data
 
 
@@ -55,6 +66,7 @@ def list_tasks(
     assignee_id: str | None = None,
     status_filter: TaskStatus | None = None,
     manager_id: str | None = None,
+    include_archived: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -65,6 +77,11 @@ def list_tasks(
     round-trip per direct report. Non-admins are additionally restricted to
     tasks they can view (assignee, creator, or their assignee's manager),
     matching `services/authz.assert_can_view_task` used elsewhere.
+
+    `include_archived` defaults to excluding archived tasks for everyone; a
+    non-admin passing `true` is silently ignored (same pattern as
+    `include_inactive` on `GET /users`) — only an admin can actually see
+    archived tasks in the default list (§5.2).
     """
     query = db.query(Task)
     if project_id:
@@ -75,6 +92,8 @@ def list_tasks(
         query = query.filter(Task.status == status_filter)
     if manager_id:
         query = query.filter(Task.assignee.has(User.manager_id == manager_id))
+    if not (include_archived and current_user.role == UserRole.ADMIN):
+        query = query.filter(Task.archived_at.is_(None))
     if current_user.role != UserRole.ADMIN:
         query = query.filter(
             or_(
@@ -92,8 +111,13 @@ def create_task(
     task_in: TaskCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     validate_assignee_active(db, task_in.assignee_id)
+    validate_project_exists(db, task_in.project_id)
+    validate_dropdown_value(db, DropdownOptionScope.TASK_CATEGORY, task_in.category)
+    validate_dropdown_value(db, DropdownOptionScope.TASK_PRIORITY, task_in.priority)
+
+    task_data = task_in.model_dump(exclude={"custom_values"})
     task = Task(
-        **task_in.model_dump(),
+        **task_data,
         created_by_id=current_user.id,
         status=TaskStatus.BACKLOG,
     )
@@ -101,6 +125,8 @@ def create_task(
         task.assignee_id = current_user.id
     db.add(task)
     db.flush()
+    if task_in.custom_values:
+        apply_custom_values(db, task, task_in.custom_values)
     record_audit(db, task, current_user, AuditAction.CREATED, f"Task created: {task.title}")
     record_status_event(db, task, current_user, None, TaskStatus.BACKLOG)
     db.commit()
@@ -128,6 +154,12 @@ def update_task(
 
     if "assignee_id" in updates:
         validate_assignee_active(db, updates["assignee_id"])
+    if "project_id" in updates:
+        validate_project_exists(db, updates["project_id"])
+    if "category" in updates:
+        validate_dropdown_value(db, DropdownOptionScope.TASK_CATEGORY, updates["category"])
+    if "priority" in updates:
+        validate_dropdown_value(db, DropdownOptionScope.TASK_PRIORITY, updates["priority"])
 
     if updates:
         for field, value in updates.items():
@@ -137,19 +169,7 @@ def update_task(
         )
 
     if task_in.custom_values:
-        for field_id, value in task_in.custom_values.items():
-            field_def = db.get(CustomFieldDefinition, field_id)
-            if not field_def:
-                raise HTTPException(status_code=400, detail=f"Unknown custom field '{field_id}'")
-            existing = (
-                db.query(TaskCustomValue)
-                .filter(TaskCustomValue.task_id == task.id, TaskCustomValue.field_id == field_id)
-                .first()
-            )
-            if existing:
-                existing.value = value
-            else:
-                db.add(TaskCustomValue(task_id=task.id, field_id=field_id, value=value))
+        apply_custom_values(db, task, task_in.custom_values)
         record_audit(
             db,
             task,
@@ -181,6 +201,37 @@ def delete_task(task_id: str, db: Session = Depends(get_db), current_user: User 
         )
     db.delete(task)
     db.commit()
+
+
+@router.post("/{task_id}/archive", response_model=TaskRead)
+def archive_task(
+    task_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    """Admin-only, orthogonal to `status` (§5.2). Idempotent — archiving an
+    already-archived task just returns it unchanged, no error."""
+    assert_admin(current_user)
+    task = _get_task_or_404(db, task_id)
+    if task.archived_at is None:
+        task.archived_at = datetime.utcnow()
+        record_audit(db, task, current_user, AuditAction.UPDATED, "Task archived by admin")
+        db.commit()
+        db.refresh(task)
+    return _serialize(db, task)
+
+
+@router.post("/{task_id}/unarchive", response_model=TaskRead)
+def unarchive_task(
+    task_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    """Symmetric to `archive_task` — admin-only, idempotent."""
+    assert_admin(current_user)
+    task = _get_task_or_404(db, task_id)
+    if task.archived_at is not None:
+        task.archived_at = None
+        record_audit(db, task, current_user, AuditAction.UPDATED, "Task unarchived by admin")
+        db.commit()
+        db.refresh(task)
+    return _serialize(db, task)
 
 
 @router.get("/{task_id}/comments", response_model=list[CommentRead])

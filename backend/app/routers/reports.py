@@ -36,7 +36,11 @@ def _scope_to_visible_tasks(query, current_user: User):
 
 
 def _completed_tasks(db: Session, project_id: str | None, current_user: User):
-    query = db.query(Task).filter(Task.status == TaskStatus.COMPLETED, Task.completed_at.isnot(None))
+    query = db.query(Task).filter(
+        Task.status == TaskStatus.COMPLETED,
+        Task.completed_at.isnot(None),
+        Task.archived_at.is_(None),
+    )
     if project_id:
         query = query.filter(Task.project_id == project_id)
     query = _scope_to_visible_tasks(query, current_user)
@@ -119,7 +123,12 @@ def cumulative_flow(
 ):
     """Count of tasks in each status, snapshotted at the end of each day
     over the trailing window, replayed from the task status event log."""
-    query = db.query(TaskStatusEvent).join(Task).order_by(TaskStatusEvent.occurred_at)
+    query = (
+        db.query(TaskStatusEvent)
+        .join(Task)
+        .filter(Task.archived_at.is_(None))
+        .order_by(TaskStatusEvent.occurred_at)
+    )
     if project_id:
         query = query.filter(Task.project_id == project_id)
     query = _scope_to_visible_tasks(query, current_user)

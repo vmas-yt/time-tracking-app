@@ -86,6 +86,12 @@ class SwimlaneField(str, enum.Enum):
     PRIORITY = "priority"
 
 
+class DropdownOptionScope(str, enum.Enum):
+    TASK_CATEGORY = "task_category"
+    TASK_PRIORITY = "task_priority"
+    CUSTOM_FIELD = "custom_field"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -129,11 +135,15 @@ class Task(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     task_type: Mapped[TaskType] = mapped_column(Enum(TaskType), default=TaskType.NORMAL, nullable=False)
-    category: Mapped[TaskCategory] = mapped_column(Enum(TaskCategory), nullable=False)
+    # category/priority were native DB enums (Enum(TaskCategory)/Enum(TaskPriority));
+    # changed to plain String, app-validated against the admin-editable
+    # DropdownOption table (see docs/design/custom-fields-admin-design.md §2.3).
+    # TaskCategory/TaskPriority are kept above only as the source list for seed
+    # data (services/bootstrap.py::ensure_default_dropdown_options), not as a
+    # column type or Pydantic field type anymore.
+    category: Mapped[str] = mapped_column(String, nullable=False)
     category_other_text: Mapped[str | None] = mapped_column(String, nullable=True)
-    priority: Mapped[TaskPriority] = mapped_column(
-        Enum(TaskPriority), default=TaskPriority.NORMAL, nullable=False
-    )
+    priority: Mapped[str] = mapped_column(String, default="normal", nullable=False)
 
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus), default=TaskStatus.BACKLOG, nullable=False
@@ -146,6 +156,7 @@ class Task(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     first_in_progress_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     project: Mapped["Project | None"] = relationship(back_populates="tasks")
     assignee: Mapped["User | None"] = relationship(back_populates="assigned_tasks", foreign_keys=[assignee_id])
@@ -268,8 +279,15 @@ class CustomFieldDefinition(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String, nullable=False)
     field_type: Mapped[CustomFieldType] = mapped_column(Enum(CustomFieldType), nullable=False)
-    options: Mapped[str | None] = mapped_column(String, nullable=True)  # comma-separated, for SELECT
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # SELECT-type option storage moved entirely to DropdownOption rows
+    # (scope=custom_field); the old CSV `options` column is dropped. These
+    # cascades ensure deleting a field cleans up after itself automatically.
+    values: Mapped[list["TaskCustomValue"]] = relationship(
+        back_populates="field", cascade="all, delete-orphan"
+    )
+    dropdown_options: Mapped[list["DropdownOption"]] = relationship(cascade="all, delete-orphan")
 
 
 class TaskCustomValue(Base):
@@ -281,7 +299,37 @@ class TaskCustomValue(Base):
     value: Mapped[str] = mapped_column(String, nullable=False)
 
     task: Mapped["Task"] = relationship(back_populates="custom_value_rows")
-    field: Mapped["CustomFieldDefinition"] = relationship()
+    field: Mapped["CustomFieldDefinition"] = relationship(back_populates="values")
+
+
+class DropdownOption(Base):
+    """Admin-editable option values for task category, task priority, and
+    every SELECT-type custom field, discriminated by `scope`. See
+    docs/design/custom-fields-admin-design.md §2.3."""
+
+    __tablename__ = "dropdown_options"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    scope: Mapped[DropdownOptionScope] = mapped_column(Enum(DropdownOptionScope), nullable=False)
+    custom_field_id: Mapped[str | None] = mapped_column(
+        ForeignKey("custom_field_definitions.id"), nullable=True
+    )  # set iff scope == CUSTOM_FIELD; null for task_category/task_priority
+    value: Mapped[str] = mapped_column(String, nullable=False)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index(
+            "uq_dropdown_option_scope_value",
+            "scope",
+            "custom_field_id",
+            "value",
+            unique=True,
+        ),
+    )
 
 
 class BoardConfig(Base):

@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.database import Base, SessionLocal, engine
 from app.routers import admin, auth, notifications, projects, reports, tasks, time_entries, users
-from app.services.bootstrap import ensure_bootstrap_admin
+from app.services.bootstrap import ensure_bootstrap_admin, ensure_default_dropdown_options
 from app.services.migrations import ensure_schema_migrations
 
 settings = get_settings()
@@ -19,6 +19,7 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         ensure_bootstrap_admin(db)
+        ensure_default_dropdown_options(db)
     finally:
         db.close()
     yield

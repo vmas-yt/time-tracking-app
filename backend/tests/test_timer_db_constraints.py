@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
-from app.models import Task, TaskCategory, TimeEntry, TimerStatus, User
+from app.models import Task, TimeEntry, TimerStatus, User
 
 
 @pytest.fixture()
@@ -29,7 +29,7 @@ def _user_and_task(session, email="a@example.com", title="Task"):
     user = User(email=email, full_name="A", hashed_password="x")
     session.add(user)
     session.flush()
-    task = Task(created_by_id=user.id, title=title, category=TaskCategory.MEETING)
+    task = Task(created_by_id=user.id, title=title, category="meeting")
     session.add(task)
     session.flush()
     return user, task
@@ -63,7 +63,7 @@ def test_db_allows_second_entry_once_first_is_stopped(db_session):
 
 def test_db_rejects_second_running_entry_for_same_user_across_tasks(db_session):
     user, task_a = _user_and_task(db_session, title="A")
-    task_b = Task(created_by_id=user.id, title="B", category=TaskCategory.MEETING)
+    task_b = Task(created_by_id=user.id, title="B", category="meeting")
     db_session.add(task_b)
     db_session.flush()
 
@@ -84,7 +84,7 @@ def test_db_allows_running_entries_for_different_users(db_session):
     user_b = User(email="b2@example.com", full_name="B", hashed_password="x")
     db_session.add(user_b)
     db_session.flush()
-    task_b = Task(created_by_id=user_b.id, title="B", category=TaskCategory.MEETING)
+    task_b = Task(created_by_id=user_b.id, title="B", category="meeting")
     db_session.add(task_b)
     db_session.flush()
 
