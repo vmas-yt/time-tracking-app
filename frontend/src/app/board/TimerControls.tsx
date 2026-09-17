@@ -52,10 +52,6 @@ interface TimerControlsProps {
   onResume: (entry: TimeEntry) => void;
   onStop: (entry: TimeEntry) => void;
   size?: "sm" | "md";
-  /** The stopped entry for a completed task, if known (only resolvable for
-   * the entry's owner — see `useCompletedEntry`). Shows total duration when
-   * present; otherwise the "Completed" pill just omits the duration. */
-  completedEntry?: TimeEntry | null;
 }
 
 /**
@@ -77,7 +73,6 @@ export function TimerControls({
   onResume,
   onStop,
   size = "sm",
-  completedEntry = null,
 }: TimerControlsProps) {
   const engineState = { tasks: [task], entries };
   const ownEntry = openEntryForTask(entries, task.id);
@@ -125,8 +120,8 @@ export function TimerControls({
           <CheckIcon />
         </span>
         Completed
-        {completedEntry && (
-          <span className="font-mono text-mute">· {formatDuration(completedEntry.accumulated_seconds)}</span>
+        {task.total_logged_seconds > 0 && (
+          <span className="font-mono text-mute">· {formatDuration(task.total_logged_seconds)}</span>
         )}
       </div>
     );
@@ -140,7 +135,17 @@ export function TimerControls({
   }
 
   if (!ownEntry) {
-    if (task.status !== "todo" && task.status !== "on_hold") return null;
+    if (task.status !== "todo" && task.status !== "on_hold") {
+      // On the compact board card this is intentionally silent — a Backlog
+      // column full of cards with no timer widget at all reads as normal,
+      // not broken. In the full task detail panel (size="md"), though, the
+      // same empty space sits inside its own bordered Card and reads as a
+      // blank/broken section rather than an intentional state, so give it a
+      // reason there — same "visible reason" principle as the !canEdit
+      // branch above.
+      if (size !== "md") return null;
+      return <span className="text-[11px] italic text-mute">Move to To Do or On Hold to start tracking time</span>;
+    }
     const check = canStart(engineState, task.id, currentUserId);
     return (
       <div className="flex flex-col items-start gap-1">

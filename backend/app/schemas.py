@@ -55,6 +55,7 @@ class UserRead(UserBase, UTCModel):
     role: UserRole
     manager_id: str | None
     is_active: bool
+    deactivated_at: UTCDatetime | None = None
     created_at: UTCDatetime
 
 

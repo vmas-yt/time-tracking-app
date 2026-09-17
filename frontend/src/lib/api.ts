@@ -6,6 +6,8 @@ import type {
   CustomField,
   CustomFieldType,
   CycleTimePoint,
+  DropdownOption,
+  DropdownOptionScope,
   LeadTimePoint,
   Project,
   ReminderCandidate,
@@ -106,18 +108,21 @@ export const api = {
   getProject: (projectId: string) => request<Project>(`/projects/${projectId}`),
   createProject: (name: string, description?: string) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify({ name, description }) }),
+  deleteProject: (projectId: string) => request<void>(`/projects/${projectId}`, { method: "DELETE" }),
 
   listTasks: (params?: {
     projectId?: string;
     assigneeId?: string;
     status?: TaskStatus;
     managerId?: string;
+    includeArchived?: boolean;
   }) => {
     const query = new URLSearchParams();
     if (params?.projectId) query.set("project_id", params.projectId);
     if (params?.assigneeId) query.set("assignee_id", params.assigneeId);
     if (params?.status) query.set("status_filter", params.status);
     if (params?.managerId) query.set("manager_id", params.managerId);
+    if (params?.includeArchived) query.set("include_archived", "true");
     const qs = query.toString();
     return request<Task[]>(`/tasks${qs ? `?${qs}` : ""}`);
   },
@@ -130,6 +135,7 @@ export const api = {
     category_other_text?: string;
     priority?: TaskPriority;
     assignee_id?: string | null;
+    custom_values?: Record<string, string>;
   }) => request<Task>("/tasks", { method: "POST", body: JSON.stringify(input) }),
   getTask: (taskId: string) => request<Task>(`/tasks/${taskId}`),
   updateTask: (
@@ -137,6 +143,7 @@ export const api = {
     input: Partial<{
       title: string;
       description: string;
+      project_id: string | null;
       assignee_id: string | null;
       category: TaskCategory;
       category_other_text: string;
@@ -147,6 +154,8 @@ export const api = {
     }>
   ) => request<Task>(`/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteTask: (taskId: string) => request<void>(`/tasks/${taskId}`, { method: "DELETE" }),
+  archiveTask: (taskId: string) => request<Task>(`/tasks/${taskId}/archive`, { method: "POST" }),
+  unarchiveTask: (taskId: string) => request<Task>(`/tasks/${taskId}/unarchive`, { method: "POST" }),
 
   listComments: (taskId: string) => request<Comment[]>(`/tasks/${taskId}/comments`),
   addComment: (taskId: string, body: string) =>
@@ -180,6 +189,33 @@ export const api = {
     request<CustomField>("/admin/custom-fields", { method: "POST", body: JSON.stringify(input) }),
   deleteCustomField: (fieldId: string) =>
     request<void>(`/admin/custom-fields/${fieldId}`, { method: "DELETE" }),
+
+  listDropdownOptions: (params: {
+    scope: DropdownOptionScope;
+    customFieldId?: string;
+    includeInactive?: boolean;
+  }) => {
+    const query = new URLSearchParams({ scope: params.scope });
+    if (params.customFieldId) query.set("custom_field_id", params.customFieldId);
+    if (params.includeInactive) query.set("include_inactive", "true");
+    return request<DropdownOption[]>(`/admin/dropdown-options?${query.toString()}`);
+  },
+  createDropdownOption: (input: {
+    scope: DropdownOptionScope;
+    custom_field_id?: string | null;
+    value: string;
+    label?: string;
+  }) => request<DropdownOption>("/admin/dropdown-options", { method: "POST", body: JSON.stringify(input) }),
+  updateDropdownOption: (
+    optionId: string,
+    input: Partial<{ label: string; is_active: boolean; position: number }>
+  ) =>
+    request<DropdownOption>(`/admin/dropdown-options/${optionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  deactivateDropdownOption: (optionId: string) =>
+    request<DropdownOption>(`/admin/dropdown-options/${optionId}`, { method: "DELETE" }),
 
   reportCycleTime: () => request<CycleTimePoint[]>("/reports/cycle-time"),
   reportControlChart: () => request<CycleTimePoint[]>("/reports/control-chart"),

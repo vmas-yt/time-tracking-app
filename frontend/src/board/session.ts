@@ -137,37 +137,3 @@ export function useTimerSession(options: UseTimerSessionOptions = {}) {
     runMutation,
   };
 }
-
-/** Lazily fetches the stopped time entry for a completed task, so its total
- * duration can be shown. `GET /time-entries` only ever returns the caller's
- * own entries (see kanban-timer-design.md §2.2), so this only resolves to a
- * value when the viewer is the task's timer owner — for anyone else (e.g. a
- * manager reviewing a report's completed task) it stays `null` and callers
- * should just render "Completed" with no duration rather than treat that as
- * an error. */
-export function useCompletedEntry(task: Task | null): TimeEntry | null {
-  const [entry, setEntry] = useState<TimeEntry | null>(null);
-
-  useEffect(() => {
-    setEntry(null);
-    if (!task || task.status !== "completed") return;
-    let cancelled = false;
-    api
-      .listTimeEntries({ taskId: task.id })
-      .then((list) => {
-        if (cancelled) return;
-        setEntry(list.find((e) => e.status === "stopped") ?? null);
-      })
-      .catch(() => {
-        // Silent — absence of a visible duration isn't an error state here.
-      });
-    return () => {
-      cancelled = true;
-    };
-    // Re-run only when the task's identity or status changes, not on every
-    // re-render of the same completed task.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task?.id, task?.status]);
-
-  return entry;
-}

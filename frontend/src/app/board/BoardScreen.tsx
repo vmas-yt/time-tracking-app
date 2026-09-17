@@ -52,8 +52,15 @@ export function BoardScreen() {
   );
 
   const lanes = useMemo(
-    () => groupIntoLanes(board.tasks, board.users, board.boardConfig.swimlane_field),
-    [board.tasks, board.users, board.boardConfig.swimlane_field]
+    () =>
+      groupIntoLanes(
+        board.tasks,
+        board.users,
+        board.boardConfig.swimlane_field,
+        board.categoryOptions,
+        board.priorityOptions
+      ),
+    [board.tasks, board.users, board.boardConfig.swimlane_field, board.categoryOptions, board.priorityOptions]
   );
 
   const handleDragStart = (e: DragEvent<HTMLDivElement>, task: Task) => {

@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { TASK_CATEGORIES } from "@/lib/types";
 import type { AuditEntry, Comment, Task, User } from "@/lib/types";
-import { useCompletedEntry, useTimerSession } from "@/board/session";
+import { categoryLabelFor } from "@/lib/options";
+import { useTimerSession } from "@/board/session";
 import { TimerControls } from "@/app/board/TimerControls";
 import { Toast } from "@/app/board/Toast";
 import { Badge } from "@/components/ui/Badge";
@@ -31,7 +31,6 @@ export default function TaskDetailPage() {
   }, [taskId]);
 
   const session = useTimerSession({ onMutated: loadTask });
-  const completedEntry = useCompletedEntry(task);
 
   const load = useCallback(() => {
     loadTask();
@@ -73,13 +72,12 @@ export default function TaskDetailPage() {
       </main>
     );
 
-  const categoryLabel =
-    TASK_CATEGORIES.find((c) => c.key === task.category)?.label ?? task.category_other_text ?? task.category;
+  const categoryLabel = categoryLabelFor(task, []);
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-8">
-      <Link href="/" className="text-sm text-mute hover:text-body">
-        ← Back to projects
+      <Link href="/board" className="text-sm text-mute hover:text-body">
+        ← Back to board
       </Link>
 
       <div className="mt-3 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
@@ -105,7 +103,6 @@ export default function TaskDetailPage() {
                 onResume={session.resume}
                 onStop={session.stop}
                 size="md"
-                completedEntry={completedEntry}
               />
             </div>
           </div>

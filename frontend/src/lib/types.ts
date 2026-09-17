@@ -2,17 +2,15 @@ export type UserRole = "employee" | "manager" | "admin";
 
 export type TaskType = "normal" | "ad_hoc";
 
-export type TaskCategory =
-  | "production_issue"
-  | "urgent_request"
-  | "meeting"
-  | "support_ticket"
-  | "cyber_security_request"
-  | "platform_support"
-  | "infrastructure"
-  | "other";
+// Category/priority moved from fixed backend enums to admin-editable,
+// DB-validated free strings (docs/design/custom-fields-admin-design.md §2) —
+// the valid set now lives in `DropdownOption` rows (see `DropdownOption`
+// below), not in the TypeScript type system. `TASK_CATEGORIES`/
+// `TASK_PRIORITIES` below remain only as the seeded-default label set to
+// fall back on before the live dropdown-options fetch resolves.
+export type TaskCategory = string;
 
-export type TaskPriority = "normal" | "expedite";
+export type TaskPriority = string;
 
 export type TaskStatus = "backlog" | "todo" | "in_progress" | "on_hold" | "completed";
 
@@ -22,6 +20,8 @@ export type SwimlaneField = "assignee" | "task_type" | "category" | "priority";
 
 export type CustomFieldType = "text" | "number" | "select" | "date" | "boolean";
 
+export type DropdownOptionScope = "task_category" | "task_priority" | "custom_field";
+
 export interface User {
   id: string;
   email: string;
@@ -29,6 +29,7 @@ export interface User {
   role: UserRole;
   manager_id: string | null;
   is_active: boolean;
+  deactivated_at: string | null;
   created_at: string;
 }
 
@@ -55,7 +56,9 @@ export interface Task {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  archived_at: string | null;
   custom_values: Record<string, string>;
+  total_logged_seconds: number;
 }
 
 export interface TimeEntry {
@@ -87,11 +90,28 @@ export interface AuditEntry {
   created_at: string;
 }
 
+export interface DropdownOption {
+  id: string;
+  scope: DropdownOptionScope;
+  custom_field_id: string | null;
+  value: string;
+  label: string;
+  is_builtin: boolean;
+  is_active: boolean;
+  position: number;
+  created_at: string;
+}
+
+// Identical shape to DropdownOption on the wire (see schemas.py's
+// `CustomFieldOptionRead = DropdownOptionRead` alias) — named separately per
+// the design doc's frontend contract (§1.4).
+export type CustomFieldOption = DropdownOption;
+
 export interface CustomField {
   id: string;
   name: string;
   field_type: CustomFieldType;
-  options: string[] | null;
+  options: CustomFieldOption[] | null;
   created_at: string;
 }
 
@@ -142,6 +162,12 @@ export const TASK_STATUSES: { key: TaskStatus; label: string }[] = [
   { key: "completed", label: "Completed" },
 ];
 
+// Seed-default label sets — mirrors the backend's `ensure_default_dropdown_
+// options()` seed exactly (docs/design/custom-fields-admin-design.md §2.4).
+// Used only as a fallback before `GET /admin/dropdown-options` resolves, or
+// as a last-resort label lookup for a stored value no longer present in the
+// live (active-only) options list. The live list is always the source of
+// truth for what's selectable — these never gate a request client-side.
 export const TASK_CATEGORIES: { key: TaskCategory; label: string }[] = [
   { key: "production_issue", label: "Production Issue" },
   { key: "urgent_request", label: "Urgent Request" },
@@ -151,6 +177,11 @@ export const TASK_CATEGORIES: { key: TaskCategory; label: string }[] = [
   { key: "platform_support", label: "Platform Support" },
   { key: "infrastructure", label: "Infrastructure" },
   { key: "other", label: "Others" },
+];
+
+export const TASK_PRIORITIES: { key: TaskPriority; label: string }[] = [
+  { key: "normal", label: "Normal" },
+  { key: "expedite", label: "Expedite" },
 ];
 
 export const SWIMLANE_FIELDS: { key: SwimlaneField; label: string }[] = [

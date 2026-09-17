@@ -3,7 +3,20 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "@/lib/api";
-import type { BoardConfig, SwimlaneField, Task, TaskCategory, TaskPriority, TaskStatus, TaskType, TimeEntry, User } from "@/lib/types";
+import type {
+  BoardConfig,
+  CustomField,
+  DropdownOption,
+  Project,
+  SwimlaneField,
+  Task,
+  TaskCategory,
+  TaskPriority,
+  TaskStatus,
+  TaskType,
+  TimeEntry,
+  User,
+} from "@/lib/types";
 import { useTimerSession } from "./session";
 import type { SessionToast } from "./session";
 
@@ -15,6 +28,19 @@ export interface CreateTaskInput {
   category_other_text?: string;
   priority?: TaskPriority;
   assignee_id?: string | null;
+  project_id?: string | null;
+  custom_values?: Record<string, string>;
+}
+
+export interface UpdateTaskInput {
+  title?: string;
+  description?: string;
+  project_id?: string | null;
+  assignee_id?: string | null;
+  category?: TaskCategory;
+  category_other_text?: string;
+  priority?: TaskPriority;
+  custom_values?: Record<string, string>;
 }
 
 interface BoardApi {
@@ -24,6 +50,10 @@ interface BoardApi {
   tasks: Task[];
   users: User[];
   managers: User[];
+  projects: Project[];
+  customFields: CustomField[];
+  categoryOptions: DropdownOption[];
+  priorityOptions: DropdownOption[];
   boardConfig: BoardConfig;
   currentUser: User | null;
   currentUserId: string;
@@ -43,6 +73,7 @@ interface BoardApi {
   stop: (entry: TimeEntry) => void;
   move: (taskId: string, target: TaskStatus) => void;
   createTask: (input: CreateTaskInput) => Promise<Task | null>;
+  updateTask: (taskId: string, input: UpdateTaskInput) => Promise<Task | null>;
   setSwimlaneField: (field: SwimlaneField) => void;
   refresh: () => void;
 }
@@ -52,6 +83,10 @@ const BoardContext = createContext<BoardApi | null>(null);
 export function BoardProvider({ children, projectId = null }: { children: ReactNode; projectId?: string | null }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  const [categoryOptions, setCategoryOptions] = useState<DropdownOption[]>([]);
+  const [priorityOptions, setPriorityOptions] = useState<DropdownOption[]>([]);
   const [boardConfig, setBoardConfig] = useState<BoardConfig>({ swimlane_field: "assignee", updated_at: "" });
   const [boardLoading, setBoardLoading] = useState(true);
   const [boardError, setBoardError] = useState<string | null>(null);
@@ -83,14 +118,22 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
     setBoardLoading(true);
     setBoardError(null);
     try {
-      const [taskList, userList, config] = await Promise.all([
+      const [taskList, userList, config, projectList, fieldList, categories, priorities] = await Promise.all([
         api.listTasks(listParams()),
         api.listUsers(),
         api.getBoardConfig(),
+        api.listProjects(),
+        api.listCustomFields(),
+        api.listDropdownOptions({ scope: "task_category" }),
+        api.listDropdownOptions({ scope: "task_priority" }),
       ]);
       setTasks(taskList);
       setUsers(userList);
       setBoardConfig(config);
+      setProjects(projectList);
+      setCustomFields(fieldList);
+      setCategoryOptions(categories);
+      setPriorityOptions(priorities);
     } catch (err) {
       setBoardError(err instanceof Error ? err.message : "Could not load the board");
     } finally {
@@ -117,6 +160,11 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
     [session, projectId]
   );
 
+  const updateTask = useCallback(
+    (taskId: string, input: UpdateTaskInput) => session.runMutation(taskId, () => api.updateTask(taskId, input)),
+    [session]
+  );
+
   const setSwimlaneField = useCallback(
     async (field: SwimlaneField) => {
       const updated = await session.runMutation("__swimlane__", () => api.updateBoardConfig(field));
@@ -141,6 +189,10 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
       tasks,
       users,
       managers,
+      projects,
+      customFields,
+      categoryOptions,
+      priorityOptions,
       boardConfig,
       currentUser: session.currentUser,
       currentUserId: session.currentUser?.id ?? "",
@@ -160,6 +212,7 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
       stop: session.stop,
       move,
       createTask,
+      updateTask,
       setSwimlaneField,
       refresh,
     }),
@@ -172,6 +225,10 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
       tasks,
       users,
       managers,
+      projects,
+      customFields,
+      categoryOptions,
+      priorityOptions,
       boardConfig,
       session.currentUser,
       session.entries,
@@ -188,6 +245,7 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
       session.stop,
       move,
       createTask,
+      updateTask,
       setSwimlaneField,
       refresh,
     ]

@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type { TaskCategory, TaskPriority, TaskType } from "@/lib/types";
-import { TASK_CATEGORIES } from "@/lib/types";
+import { TASK_CATEGORIES, TASK_PRIORITIES } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
 import { useBoard } from "@/board/store";
+import { activeOptions } from "@/lib/options";
+import { CustomFieldInput } from "./CustomFieldInput";
 
 /** Right-side slide-over for task creation — replaces the old inline
  * `NewTaskForm` at the top of the board (design doc §14 item 4). Same
@@ -21,11 +23,25 @@ export function AddTaskPanel({ open, onClose }: { open: boolean; onClose: () => 
   const [taskType, setTaskType] = useState<TaskType>("normal");
   const [priority, setPriority] = useState<TaskPriority>("normal");
   const [assigneeId, setAssigneeId] = useState<string>(board.currentUserId);
+  const [projectId, setProjectId] = useState<string>("");
   const [description, setDescription] = useState("");
+  const [customValues, setCustomValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
+  const categoryChoices = board.categoryOptions.length
+    ? activeOptions(board.categoryOptions)
+    : TASK_CATEGORIES.map((c) => ({ value: c.key, label: c.label }));
+  const priorityChoices = board.priorityOptions.length
+    ? activeOptions(board.priorityOptions)
+    : TASK_PRIORITIES.map((p) => ({ value: p.key, label: p.label }));
+
   useEffect(() => {
-    if (open) setAssigneeId(board.currentUserId);
+    if (!open) return;
+    setAssigneeId(board.currentUserId);
+    setProjectId(board.projectId ?? "");
+    setCategory((categoryChoices.find((c) => c.value === "meeting")?.value ?? categoryChoices[0]?.value ?? "meeting") as TaskCategory);
+    setPriority((priorityChoices.find((p) => p.value === "normal")?.value ?? priorityChoices[0]?.value ?? "normal") as TaskPriority);
+    setCustomValues({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -40,11 +56,11 @@ export function AddTaskPanel({ open, onClose }: { open: boolean; onClose: () => 
 
   const resetAndClose = () => {
     setTitle("");
-    setCategory("meeting");
     setCategoryOtherText("");
     setTaskType("normal");
-    setPriority("normal");
     setDescription("");
+    setProjectId("");
+    setCustomValues({});
     onClose();
   };
 
@@ -61,6 +77,8 @@ export function AddTaskPanel({ open, onClose }: { open: boolean; onClose: () => 
       task_type: taskType,
       priority,
       assignee_id: assigneeId || null,
+      project_id: projectId || null,
+      custom_values: customValues,
     });
     setSubmitting(false);
     if (created) resetAndClose();
@@ -113,8 +131,8 @@ export function AddTaskPanel({ open, onClose }: { open: boolean; onClose: () => 
           <label className="space-y-1.5 text-sm">
             <span className="font-semibold text-ink">Category</span>
             <Select value={category} onChange={(e) => setCategory(e.target.value as TaskCategory)}>
-              {TASK_CATEGORIES.map((c) => (
-                <option key={c.key} value={c.key}>
+              {categoryChoices.map((c) => (
+                <option key={c.value} value={c.value}>
                   {c.label}
                 </option>
               ))}
@@ -143,8 +161,11 @@ export function AddTaskPanel({ open, onClose }: { open: boolean; onClose: () => 
             <label className="space-y-1.5 text-sm">
               <span className="font-semibold text-ink">Priority</span>
               <Select value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)}>
-                <option value="normal">Normal</option>
-                <option value="expedite">Expedite</option>
+                {priorityChoices.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
               </Select>
             </label>
           </div>
@@ -160,6 +181,18 @@ export function AddTaskPanel({ open, onClose }: { open: boolean; onClose: () => 
             </Select>
           </label>
 
+          <label className="space-y-1.5 text-sm">
+            <span className="font-semibold text-ink">Project</span>
+            <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              <option value="">No project (standalone)</option>
+              {board.projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+
           <label className="flex flex-1 flex-col space-y-1.5 text-sm">
             <span className="font-semibold text-ink">Description (optional)</span>
             <textarea
@@ -170,6 +203,22 @@ export function AddTaskPanel({ open, onClose }: { open: boolean; onClose: () => 
               className="w-full flex-1 rounded-md border border-ink bg-canvas px-4 py-2.5 text-sm text-ink placeholder:text-mute focus:outline-none focus:ring-2 focus:ring-primary-neutral"
             />
           </label>
+
+          {board.customFields.length > 0 && (
+            <div className="space-y-3 border-t border-canvas-soft pt-4">
+              <span className="text-sm font-semibold text-ink">Custom fields</span>
+              {board.customFields.map((field) => (
+                <label key={field.id} className="block space-y-1.5 text-sm">
+                  <span className="text-ink">{field.name}</span>
+                  <CustomFieldInput
+                    field={field}
+                    value={customValues[field.id] ?? ""}
+                    onChange={(value) => setCustomValues((prev) => ({ ...prev, [field.id]: value }))}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
 
           <div className="mt-auto flex gap-2 border-t border-canvas-soft pt-4">
             <Button variant="primary" type="submit" disabled={!title.trim() || submitting} className="flex-1">

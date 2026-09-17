@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input, Select } from "@/components/ui/Input";
+import { UserProfilePanel } from "./UserProfilePanel";
 
 const ROLE_LABEL: Record<UserRole, string> = {
   employee: "Employee",
@@ -268,6 +269,7 @@ export function UserManagement({ currentUserId }: { currentUserId: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [resettingId, setResettingId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [profileUserId, setProfileUserId] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -398,7 +400,15 @@ export function UserManagement({ currentUserId }: { currentUserId: string }) {
                         !u.is_active && "opacity-50"
                       )}
                     >
-                      <td className="py-2 font-medium text-ink">{u.full_name}</td>
+                      <td className="py-2 font-medium text-ink">
+                        <button
+                          type="button"
+                          onClick={() => setProfileUserId(u.id)}
+                          className="hover:underline"
+                        >
+                          {u.full_name}
+                        </button>
+                      </td>
                       <td className="py-2 text-mute">{u.email}</td>
                       <td className="py-2 text-body">{ROLE_LABEL[u.role]}</td>
                       <td className="py-2 text-body">{manager?.full_name ?? "—"}</td>
@@ -440,6 +450,13 @@ export function UserManagement({ currentUserId }: { currentUserId: string }) {
           </div>
         )}
       </CardBody>
+      {profileUserId && (
+        <UserProfilePanel
+          user={users.find((u) => u.id === profileUserId)!}
+          users={users}
+          onClose={() => setProfileUserId(null)}
+        />
+      )}
     </Card>
   );
 }
