@@ -21,7 +21,7 @@ export function TaskCard({ task, openEntries, onTimerChange, onDragStart }: Task
 
   return (
     <div
-      className="cursor-grab space-y-2 rounded-lg border border-gray-200 bg-white p-3 shadow-sm transition-shadow hover:shadow-md active:cursor-grabbing"
+      className="cursor-grab space-y-2 rounded-xl bg-canvas p-3 transition-colors hover:bg-primary-pale/40 active:cursor-grabbing"
       draggable
       onDragStart={() => onDragStart(task)}
     >
@@ -30,15 +30,10 @@ export function TaskCard({ task, openEntries, onTimerChange, onDragStart }: Task
         {task.priority === "expedite" && <Badge tone="red">Expedite</Badge>}
         <Badge tone="blue">{categoryLabel}</Badge>
       </div>
-      <Link
-        href={`/tasks/${task.id}`}
-        className="block text-sm font-medium text-gray-900 hover:text-brand-600"
-      >
+      <Link href={`/tasks/${task.id}`} className="block text-sm font-semibold text-ink hover:underline">
         {task.title}
       </Link>
-      {task.description && (
-        <p className="line-clamp-2 text-xs text-gray-500">{task.description}</p>
-      )}
+      {task.description && <p className="line-clamp-2 text-xs text-mute">{task.description}</p>}
       <TimerControls task={task} openEntries={openEntries} onChange={onTimerChange} />
     </div>
   );

@@ -21,10 +21,16 @@ import { TASK_STATUSES } from "@/lib/types";
 import type { CumulativeFlowPoint, CycleTimePoint, LeadTimePoint, ThroughputBucket } from "@/lib/types";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 
-const SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"];
-const GRID = "#e5e7eb";
-const TICK = { fill: "#9ca3af", fontSize: 11 };
-const TOOLTIP_STYLE = { background: "#ffffff", border: `1px solid ${GRID}`, borderRadius: 8, fontSize: 12 };
+// Wise-Inspired-design-analysis chart palette (see --color-chart-* in globals.css)
+const SERIES = ["#2ead4b", "#38c8ff", "#b86700", "#d03238", "#163300"];
+const GRID = "#dfe3da";
+const TICK = { fill: "#868685", fontSize: 11 };
+const TOOLTIP_STYLE = {
+  background: "#ffffff",
+  border: `1px solid ${GRID}`,
+  borderRadius: 12,
+  fontSize: 12,
+};
 
 function mean(values: number[]): number {
   return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
@@ -82,11 +88,11 @@ export default function ReportsPage() {
   return (
     <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Reports</h1>
-        <p className="mt-1 text-sm text-gray-500">Derived from completed tasks and their status history.</p>
+        <h1 className="text-2xl font-bold tracking-tight text-ink">Reports</h1>
+        <p className="mt-1 text-sm text-mute">Derived from completed tasks and their status history.</p>
       </div>
       {error && (
-        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <p className="rounded-xl bg-negative-bg px-4 py-2 text-sm text-canvas">
           {error} — log in first at /login
         </p>
       )}
@@ -97,7 +103,7 @@ export default function ReportsPage() {
           </CardHeader>
           <CardBody>
             {controlPoints.length === 0 ? (
-              <p className="text-sm text-gray-400">No completed tasks yet.</p>
+              <p className="text-sm text-mute">No completed tasks yet.</p>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
                 <ScatterChart margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
@@ -105,10 +111,10 @@ export default function ReportsPage() {
                   <XAxis dataKey="date" tick={TICK} />
                   <YAxis dataKey="hours" tick={TICK} unit="h" />
                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(value) => [`${value}h`, "Cycle time"]} />
-                  <ReferenceLine y={controlMean} stroke="#9ca3af" strokeDasharray="4 4" label="mean" />
+                  <ReferenceLine y={controlMean} stroke="#868685" strokeDasharray="4 4" label="mean" />
                   <ReferenceLine
                     y={controlMean + controlStd}
-                    stroke="#eda100"
+                    stroke="#b86700"
                     strokeDasharray="2 2"
                     label="UCL"
                   />
@@ -125,7 +131,7 @@ export default function ReportsPage() {
           </CardHeader>
           <CardBody>
             {controlHours.length === 0 ? (
-              <p className="text-sm text-gray-400">No completed tasks yet.</p>
+              <p className="text-sm text-mute">No completed tasks yet.</p>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={cycleBuckets} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
@@ -146,7 +152,7 @@ export default function ReportsPage() {
           </CardHeader>
           <CardBody>
             {leadPoints.length === 0 ? (
-              <p className="text-sm text-gray-400">No completed tasks yet.</p>
+              <p className="text-sm text-mute">No completed tasks yet.</p>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
                 <ScatterChart margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
@@ -167,7 +173,7 @@ export default function ReportsPage() {
           </CardHeader>
           <CardBody>
             {throughput.length === 0 ? (
-              <p className="text-sm text-gray-400">No completed tasks yet.</p>
+              <p className="text-sm text-mute">No completed tasks yet.</p>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={throughput} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
@@ -188,7 +194,7 @@ export default function ReportsPage() {
           </CardHeader>
           <CardBody>
             {cfdData.length === 0 ? (
-              <p className="text-sm text-gray-400">No tasks yet.</p>
+              <p className="text-sm text-mute">No tasks yet.</p>
             ) : (
               <ResponsiveContainer width="100%" height={320}>
                 <AreaChart data={cfdData} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
@@ -196,7 +202,7 @@ export default function ReportsPage() {
                   <XAxis dataKey="date" tick={TICK} />
                   <YAxis tick={TICK} allowDecimals={false} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  <Legend wrapperStyle={{ fontSize: 12, color: "#6b7280" }} />
+                  <Legend wrapperStyle={{ fontSize: 12, color: "#868685" }} />
                   {TASK_STATUSES.map((s, i) => (
                     <Area
                       key={s.key}

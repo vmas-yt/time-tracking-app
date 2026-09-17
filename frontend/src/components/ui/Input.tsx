@@ -2,8 +2,10 @@ import { forwardRef } from "react";
 import type { InputHTMLAttributes, SelectHTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
 
+// Wise-Inspired-design-analysis: text-input — ink border, rounded-md (12px),
+// focus communicated via ring rather than a fill change.
 const fieldClasses =
-  "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-gray-50 disabled:text-gray-500";
+  "w-full rounded-md border border-ink bg-canvas px-4 py-2.5 text-sm text-ink placeholder:text-mute focus:outline-none focus:ring-2 focus:ring-primary-neutral disabled:bg-canvas-soft disabled:text-mute";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (

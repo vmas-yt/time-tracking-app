@@ -15,12 +15,12 @@ export default function BoardPage() {
   return (
     <main className="mx-auto max-w-[1600px] px-6 py-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Board</h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <h1 className="text-2xl font-bold tracking-tight text-ink">Board</h1>
+        <p className="mt-1 text-sm text-mute">
           Tasks are standalone by default — link one to a project from its detail page if needed.
         </p>
       </div>
-      <Suspense fallback={<p className="text-sm text-gray-500">Loading…</p>}>
+      <Suspense fallback={<p className="text-sm text-mute">Loading…</p>}>
         <BoardContent />
       </Suspense>
     </main>

@@ -12,21 +12,26 @@ what's explicitly out of scope (no billing, no approval step, no
 integrations, no automatic/idle tracking).
 
 **Also read `DESIGN.md` in the project root before doing any UI work — no
-exceptions.** It is the visual system of record: color palette, typography
-scale, spacing tokens, radii, elevation, and component specs (buttons,
-cards, inputs, tags, nav). Follow its tokens and component rules exactly —
-`{colors.primary}` for CTAs, the documented type scale and letter-spacing,
-the `{rounded.*}` and `{spacing.*}` scales, pill-shaped buttons, `tnum` on
-every money/numeric cell — rather than inventing your own palette, spacing,
-or component patterns. Where `DESIGN.md` specifies a marketing-site element
-that has no equivalent in this internal tool (the gradient mesh hero,
-pricing cards, a public footer), adapt the underlying tokens (color,
-type, radius, spacing, elevation) to the app screen you're building instead
-of skipping the system entirely — e.g. the nav bar follows
-`{nav-bar-on-mesh}`'s surface/type/padding even with no mesh behind it, and
-a task card follows `{card-feature-light}`'s radius/padding/border rather
-than an ad hoc one. If a rule in `DESIGN.md` is genuinely inapplicable, say
-so explicitly rather than quietly reverting to a different look.
+exceptions.** It holds several independent, named design-token analyses
+(each its own `---`-delimited block with a `name:` field) — treat it as a
+library of systems, not one spec. **This app currently implements
+`Wise-Inspired-design-analysis`** — a lime-green `{colors.primary}` CTA
+accent, a sage `{colors.canvas-soft}` page background with white
+`{colors.canvas}` cards (surface contrast is the elevation model, so cards
+carry no border/shadow), `{rounded.xl}` (24px) as the canonical card/button
+radius, and a heavy near-black display weight. Find that block by its
+`name:` field before touching styles — don't pull tokens from the other
+analyses in the file. If asked to move the app to a different named
+analysis, treat that as a full re-derivation: rebuild `globals.css`'s
+`@theme` tokens and the `components/ui/` primitives from that analysis's
+`colors`/`typography`/`spacing`/`rounded`/`components` blocks, then update
+this paragraph to name the new one — never blend tokens across analyses.
+Where the active analysis specifies a marketing-site element with no
+equivalent in this internal tool (a hero, pricing cards, a public footer),
+adapt its underlying tokens (color, type, radius, spacing, elevation) to
+the app screen you're building instead of skipping the system entirely. If
+a rule is genuinely inapplicable, say so explicitly rather than quietly
+reverting to a different look.
 
 ## Responsibilities
 
@@ -58,15 +63,15 @@ so explicitly rather than quietly reverting to a different look.
   - The reports page (`app/reports/page.tsx`) — control chart, cycle time,
     lead time, cumulative flow diagram, throughput are all must-haves per
     the PRD; if you touch charts, load the `dataviz` skill first.
-- Keep visual language consistent with `DESIGN.md`, implemented via Tailwind
-  CSS v4 (CSS-first config in `app/globals.css`'s `@theme` block — map its
-  tokens to `DESIGN.md`'s colors/type/spacing/radii, not an invented scale)
-  plus the shared primitives in `components/ui/` (`Button`, `Card`, `Badge`,
-  `Input`, `Select`). Build new UI out of those primitives and Tailwind
-  utility classes rather than hand-rolled CSS or a competing component
-  pattern. Bring the primitives themselves in line with `DESIGN.md` when
-  they drift from it — e.g. `Button` should render `DESIGN.md`'s pill
-  radius and padding, not an arbitrary one.
+- Keep visual language consistent with the active `Wise-Inspired-design-analysis`
+  tokens, implemented via Tailwind CSS v4 (CSS-first config in
+  `app/globals.css`'s `@theme` block — every `--color-*`/`--radius-*` there
+  mirrors that analysis's `{colors.*}`/`{rounded.*}` names) plus the shared
+  primitives in `components/ui/` (`Button`, `Card`, `Badge`, `Input`,
+  `Select`). Build new UI out of those primitives and Tailwind utility
+  classes rather than hand-rolled CSS or a competing component pattern.
+  Bring the primitives themselves back in line with the spec when they
+  drift from it.
 
 ## Working style
 

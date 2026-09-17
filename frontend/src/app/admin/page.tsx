@@ -71,13 +71,13 @@ export default function AdminPage() {
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 px-6 py-8">
-      <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Admin</h1>
+      <h1 className="text-2xl font-bold tracking-tight text-ink">Admin</h1>
       {error && (
         <p
-          className="cursor-pointer rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
+          className="cursor-pointer rounded-xl bg-negative-bg px-4 py-2 text-sm text-canvas"
           onClick={() => setError(null)}
         >
-          {error} <span className="text-red-400">(click to dismiss — admin actions require the admin role)</span>
+          {error} <span className="opacity-70">(click to dismiss — admin actions require the admin role)</span>
         </p>
       )}
 
@@ -86,7 +86,7 @@ export default function AdminPage() {
           <CardTitle>Kanban board</CardTitle>
         </CardHeader>
         <CardBody>
-          <label className="flex items-center gap-3 text-sm text-gray-600">
+          <label className="flex items-center gap-3 text-sm text-body">
             Swim lanes grouped by
             <Select
               value={boardConfig?.swimlane_field ?? "assignee"}
@@ -130,15 +130,15 @@ export default function AdminPage() {
             </Button>
           </form>
           {customFields.length === 0 ? (
-            <p className="text-sm text-gray-400">No custom fields defined yet.</p>
+            <p className="text-sm text-mute">No custom fields defined yet.</p>
           ) : (
             <ul className="space-y-2">
               {customFields.map((f) => (
                 <li
                   key={f.id}
-                  className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2"
+                  className="flex items-center justify-between rounded-xl bg-canvas-soft px-3 py-2"
                 >
-                  <span className="flex items-center gap-2 text-sm text-gray-700">
+                  <span className="flex items-center gap-2 text-sm text-body">
                     {f.name} <Badge>{f.field_type}</Badge>
                   </span>
                   <Button variant="danger" size="sm" onClick={() => handleDeleteField(f.id)}>
@@ -158,18 +158,18 @@ export default function AdminPage() {
         <CardBody className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-100 text-left text-xs uppercase text-gray-400">
-                <th className="py-2 font-medium">Name</th>
-                <th className="py-2 font-medium">Email</th>
-                <th className="py-2 font-medium">Role</th>
-                <th className="py-2 font-medium">Manager</th>
+              <tr className="border-b border-mute/20 text-left text-xs uppercase text-mute">
+                <th className="py-2 font-semibold">Name</th>
+                <th className="py-2 font-semibold">Email</th>
+                <th className="py-2 font-semibold">Role</th>
+                <th className="py-2 font-semibold">Manager</th>
               </tr>
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-b border-gray-50 last:border-0">
-                  <td className="py-2 text-gray-900">{u.full_name}</td>
-                  <td className="py-2 text-gray-500">{u.email}</td>
+                <tr key={u.id} className="border-b border-canvas-soft last:border-0">
+                  <td className="py-2 font-medium text-ink">{u.full_name}</td>
+                  <td className="py-2 text-mute">{u.email}</td>
                   <td className="py-2">
                     <Select
                       value={u.role}

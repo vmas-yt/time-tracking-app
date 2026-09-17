@@ -45,14 +45,28 @@ state (see `backend/README.md` for the exact rules).
 
 ## Design system
 
-Tailwind CSS v4 (CSS-first config — see the `@theme` block in
-`src/app/globals.css`) plus a small set of hand-built primitives in
-`src/components/ui/` styled in the shadcn/ui idiom, rather than a hand-rolled
-global stylesheet. The look is a clean, light, "modern SaaS" aesthetic
-(Linear/Notion/ClickUp-adjacent): white cards on a light gray page, an
-indigo accent (`brand-*` theme colors), Inter as the typeface, and generous
-whitespace. Charts on `/reports` use `recharts`, colored from the `dataviz`
-skill's validated light-mode categorical palette.
+Follows the **Wise-Inspired-design-analysis** system documented in
+`/DESIGN.md` (the project has several named design analyses in that file;
+this app implements that one specifically). Tailwind CSS v4 (CSS-first
+config — see the `@theme` block in `src/app/globals.css`, where every token
+name mirrors `DESIGN.md`'s `{colors.*}` names) plus a small set of
+hand-built primitives in `src/components/ui/` (`Button`, `Card`, `Badge`,
+`Input`, `Select`).
+
+Signature traits: a lime-green `primary` CTA accent (`#9fe870`, text
+`on-primary` near-black) used sparingly for primary actions and the active
+nav tab; a sage-tinted `canvas-soft` page background with white `canvas`
+cards — surface contrast *is* the elevation, so cards carry no border or
+shadow; `rounded-xl` (24px) as the canonical card/button radius; Inter as
+the typeface, bold headings approximating Wise Sans' heavy display weight.
+Charts on `/reports` are colored from Wise's semantic + accent tokens
+(`positive`, `accent-cyan`, `warning-deep`, `negative`, `ink-deep`).
+
+Redesigning to a different named analysis in `DESIGN.md` means re-deriving
+`globals.css`'s `@theme` tokens and the `ui/` primitives from that
+analysis's `colors`/`typography`/`spacing`/`rounded`/`components` blocks —
+the rest of the app (`KanbanBoard`, pages, etc.) consumes those primitives
+and shouldn't need to change.
 
 ## Known follow-up
 

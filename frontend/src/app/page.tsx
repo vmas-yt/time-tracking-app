@@ -31,10 +31,10 @@ export default function HomePage() {
     <main className="mx-auto max-w-6xl px-6 py-10">
       <div className="mb-8 flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Projects</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold tracking-tight text-ink">Projects</h1>
+          <p className="mt-1 text-sm text-mute">
             Optional groupings for tasks — most work happens directly on the{" "}
-            <Link href="/board" className="text-brand-600 hover:underline">
+            <Link href="/board" className="font-semibold text-ink-deep hover:underline">
               board
             </Link>
             .
@@ -43,7 +43,7 @@ export default function HomePage() {
       </div>
 
       {error && (
-        <p className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <p className="mb-6 rounded-xl bg-negative-bg px-4 py-3 text-sm text-canvas">
           {error} — log in first at{" "}
           <Link href="/login" className="underline">
             /login
@@ -64,15 +64,15 @@ export default function HomePage() {
       </form>
 
       {projects.length === 0 ? (
-        <Card className="px-6 py-12 text-center text-sm text-gray-500">No projects yet.</Card>
+        <Card className="px-6 py-12 text-center text-sm text-mute">No projects yet.</Card>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map((p) => (
             <Link key={p.id} href={`/board?project=${p.id}`}>
-              <Card className="h-full px-5 py-4 transition-shadow hover:shadow-md">
-                <div className="font-medium text-gray-900">{p.name}</div>
+              <Card className="h-full px-5 py-4 transition-colors hover:bg-primary-pale">
+                <div className="font-bold text-ink">{p.name}</div>
                 {p.description && (
-                  <div className="mt-1 line-clamp-2 text-sm text-gray-500">{p.description}</div>
+                  <div className="mt-1 line-clamp-2 text-sm text-body">{p.description}</div>
                 )}
               </Card>
             </Link>

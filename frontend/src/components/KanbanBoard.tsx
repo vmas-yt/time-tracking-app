@@ -111,10 +111,10 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
     <div className="space-y-8">
       {error && (
         <p
-          className="cursor-pointer rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
+          className="cursor-pointer rounded-xl bg-negative-bg px-4 py-2 text-sm text-canvas"
           onClick={() => setError(null)}
         >
-          {error} <span className="text-red-400">(click to dismiss)</span>
+          {error} <span className="opacity-70">(click to dismiss)</span>
         </p>
       )}
       <form onSubmit={handleCreateTask} className="flex flex-wrap gap-2">

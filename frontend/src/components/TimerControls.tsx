@@ -87,7 +87,7 @@ export function TimerControls({ task, openEntries, onChange }: TimerControlsProp
 
   return (
     <div className="flex items-center gap-1.5">
-      <span className="font-mono text-xs tabular-nums text-gray-500">{formatDuration(elapsed)}</span>
+      <span className="font-mono text-xs tabular-nums text-mute">{formatDuration(elapsed)}</span>
       {ownEntry.status === "running" ? (
         <Button size="sm" variant="secondary" disabled={busy} onClick={() => guard(() => api.pauseTimer(ownEntry.id))}>
           <PauseIcon /> Pause

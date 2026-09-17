@@ -31,14 +31,14 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-[calc(100vh-57px)] items-center justify-center bg-gray-50 px-4">
+    <main className="flex min-h-[calc(100vh-57px)] items-center justify-center px-4">
       <Card className="w-full max-w-sm">
         <CardBody className="space-y-5">
           <div>
-            <h1 className="text-lg font-semibold text-gray-900">
+            <h1 className="text-lg font-bold text-ink">
               {mode === "login" ? "Welcome back" : "Create your account"}
             </h1>
-            <p className="mt-1 text-sm text-gray-500">
+            <p className="mt-1 text-sm text-mute">
               {mode === "login"
                 ? "Log in to track time against your tasks."
                 : "The first account created becomes an admin."}
@@ -64,13 +64,13 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            {error && <p className="text-sm text-negative">{error}</p>}
             <Button variant="primary" type="submit" className="w-full">
               {mode === "login" ? "Log in" : "Register"}
             </Button>
           </form>
           <button
-            className="w-full text-center text-sm text-gray-500 hover:text-gray-700"
+            className="w-full text-center text-sm text-mute hover:text-body"
             onClick={() => setMode(mode === "login" ? "register" : "login")}
           >
             {mode === "login" ? "Need an account? Register" : "Have an account? Log in"}
