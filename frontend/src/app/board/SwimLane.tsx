@@ -4,7 +4,7 @@ import type { DragEvent } from "react";
 import type { Task, TaskStatus } from "@/lib/types";
 import { TASK_STATUSES } from "@/lib/types";
 import { cn } from "@/lib/cn";
-import type { Lane } from "@/prototype/board/lanes";
+import type { Lane } from "@/board/lanes";
 import { TaskCard } from "./TaskCard";
 
 interface SwimLaneProps {

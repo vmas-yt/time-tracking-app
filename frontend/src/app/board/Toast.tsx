@@ -1,17 +1,22 @@
 "use client";
 
 import { useEffect } from "react";
-import { usePrototypeBoard } from "@/prototype/board/store";
+import type { SessionToast } from "@/board/session";
+
+interface ToastProps {
+  toast: SessionToast | null;
+  dismissToast: () => void;
+}
 
 // Floating overlay feedback for rejected actions (invalid drag target, timer
-// guard failure, etc.) — per the brief, disabled/blocked actions must give a
-// visible reason rather than a silent no-op. A toast/floating surface is one
-// of the few places in this design system a shadow is legitimate: it isn't
-// an in-flow page card (whose elevation model is pure surface contrast) —
-// it's literally floating above the page.
-export function Toast() {
-  const { toast, dismissToast } = usePrototypeBoard();
-
+// guard failure, a real 403/409 from the API, etc.) — disabled/blocked
+// actions must give a visible reason rather than a silent no-op. A toast is
+// one of the few places in this design system a shadow is legitimate: it
+// isn't an in-flow page card (whose elevation model is pure surface
+// contrast) — it's literally floating above the page. Takes props (rather
+// than reading `useBoard()` directly) so it's reusable on the standalone
+// task detail page, which has its own `useTimerSession` and no `BoardProvider`.
+export function Toast({ toast, dismissToast }: ToastProps) {
   useEffect(() => {
     if (!toast) return;
     const id = setTimeout(dismissToast, 4200);

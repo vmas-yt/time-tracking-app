@@ -5,7 +5,7 @@ import type { Task } from "@/lib/types";
 import { TASK_CATEGORIES } from "@/lib/types";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/cn";
-import { usePrototypeBoard } from "@/prototype/board/store";
+import { useBoard } from "@/board/store";
 import { TimerControls } from "./TimerControls";
 
 interface TaskCardProps {
@@ -25,11 +25,14 @@ function initials(name: string): string {
 }
 
 export function TaskCard({ task, isDragging, onDragStart, onDragEnd }: TaskCardProps) {
-  const board = usePrototypeBoard();
+  const board = useBoard();
   const assignee = board.users.find((u) => u.id === task.assignee_id);
   const categoryLabel =
     TASK_CATEGORIES.find((c) => c.key === task.category)?.label ?? task.category_other_text ?? task.category;
-  const draggable = task.status !== "completed";
+  // Only draggable if the task hasn't reached its terminal status and the
+  // viewer is actually allowed to edit it — dragging a task you can only
+  // view (e.g. a manager's report) would just 403 on drop.
+  const draggable = task.status !== "completed" && board.canEditTask(task);
 
   return (
     <div
@@ -70,7 +73,17 @@ export function TaskCard({ task, isDragging, onDragStart, onDragEnd }: TaskCardP
       {task.description && <p className="line-clamp-2 text-xs leading-relaxed text-mute">{task.description}</p>}
 
       <div className="pt-0.5">
-        <TimerControls task={task} />
+        <TimerControls
+          task={task}
+          entries={board.entries}
+          currentUserId={board.currentUserId}
+          canEdit={board.canEditTask(task)}
+          isPending={board.isPending(task.id)}
+          onStart={board.start}
+          onPause={board.pause}
+          onResume={board.resume}
+          onStop={board.stop}
+        />
       </div>
     </div>
   );

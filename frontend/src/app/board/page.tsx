@@ -2,26 +2,32 @@
 
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
-import { KanbanBoard } from "@/components/KanbanBoard";
+import { BoardProvider } from "@/board/store";
+import { BoardScreen } from "./BoardScreen";
 
-function BoardContent() {
+// The Kanban board — 5 fixed columns (Backlog/To Do/In Progress/On Hold/
+// Completed), swim lanes grouped by whatever field the admin picked
+// (assignee/task type/category/priority), backed by the real API via
+// `BoardProvider` (see src/board/store.tsx). Task creation, drag-and-drop
+// status moves, and the timer widget all call the FastAPI backend directly
+// — no dummy data or client-side state machine simulating the backend.
+// `?project=<id>` (linked from the project list on `/`) scopes the board to
+// one project; tasks are standalone by default per the PRD.
+function BoardWithProject() {
   const params = useSearchParams();
-  const projectId = params.get("project") ?? undefined;
-
-  return <KanbanBoard projectId={projectId} />;
+  const projectId = params.get("project");
+  return (
+    <BoardProvider projectId={projectId}>
+      <BoardScreen />
+    </BoardProvider>
+  );
 }
 
 export default function BoardPage() {
   return (
-    <main className="mx-auto max-w-[1600px] px-6 py-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight text-ink">Board</h1>
-        <p className="mt-1 text-sm text-mute">
-          Tasks are standalone by default — link one to a project from its detail page if needed.
-        </p>
-      </div>
+    <main className="mx-auto max-w-[1700px] px-6 py-8">
       <Suspense fallback={<p className="text-sm text-mute">Loading…</p>}>
-        <BoardContent />
+        <BoardWithProject />
       </Suspense>
     </main>
   );

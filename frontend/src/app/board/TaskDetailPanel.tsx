@@ -2,13 +2,16 @@
 
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { api } from "@/lib/api";
+import type { AuditEntry, Comment } from "@/lib/types";
 import { TASK_CATEGORIES } from "@/lib/types";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
-import { formatRelativeTime } from "@/prototype/board/format";
-import { usePrototypeBoard } from "@/prototype/board/store";
+import { useCompletedEntry } from "@/board/session";
+import { useBoard } from "@/board/store";
+import { formatRelativeTime } from "@/board/format";
 import { TimerControls } from "./TimerControls";
 
 const STATUS_TONE = {
@@ -20,9 +23,37 @@ const STATUS_TONE = {
 } as const;
 
 export function TaskDetailPanel() {
-  const board = usePrototypeBoard();
-  const [draft, setDraft] = useState("");
+  const board = useBoard();
   const task = board.tasks.find((t) => t.id === board.selectedTaskId) ?? null;
+
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [posting, setPosting] = useState(false);
+
+  const completedEntry = useCompletedEntry(task);
+
+  const loadActivity = async (taskId: string) => {
+    setActivityLoading(true);
+    setActivityError(null);
+    try {
+      const [c, a] = await Promise.all([api.listComments(taskId), api.listAudit(taskId)]);
+      setComments(c);
+      setAudit(a);
+    } catch (err) {
+      setActivityError(err instanceof Error ? err.message : "Could not load comments/audit trail");
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!task) return;
+    loadActivity(task.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.id]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -39,18 +70,23 @@ export function TaskDetailPanel() {
   const creator = board.users.find((u) => u.id === task.created_by_id);
   const categoryLabel =
     TASK_CATEGORIES.find((c) => c.key === task.category)?.label ?? task.category_other_text ?? task.category;
-  const comments = board.comments.filter((c) => c.task_id === task.id);
-  const audit = board.audit
-    .filter((a) => a.task_id === task.id)
-    .slice()
-    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-  const authorName = (id: string) => (id === board.currentUserId ? "You" : board.users.find((u) => u.id === id)?.full_name ?? id);
+  const authorName = (id: string) =>
+    id === board.currentUserId ? "You" : board.users.find((u) => u.id === id)?.full_name ?? id;
 
-  const handleComment = (e: FormEvent) => {
+  const handleComment = async (e: FormEvent) => {
     e.preventDefault();
-    if (!draft.trim()) return;
-    board.comment(task.id, draft.trim());
-    setDraft("");
+    const body = draft.trim();
+    if (!body) return;
+    setPosting(true);
+    try {
+      await api.addComment(task.id, body);
+      setDraft("");
+      await loadActivity(task.id);
+    } catch (err) {
+      setActivityError(err instanceof Error ? err.message : "Could not post comment");
+    } finally {
+      setPosting(false);
+    }
   };
 
   return (
@@ -91,8 +127,24 @@ export function TaskDetailPanel() {
         <div className="space-y-5 p-6">
           <Card className="p-4">
             {task.description && <p className="mb-3 text-sm leading-relaxed text-body">{task.description}</p>}
-            <TimerControls task={task} size="md" />
+            <TimerControls
+              task={task}
+              entries={board.entries}
+              currentUserId={board.currentUserId}
+              canEdit={board.canEditTask(task)}
+              isPending={board.isPending(task.id)}
+              onStart={board.start}
+              onPause={board.pause}
+              onResume={board.resume}
+              onStop={board.stop}
+              size="md"
+              completedEntry={completedEntry}
+            />
           </Card>
+
+          {activityError && (
+            <p className="rounded-xl bg-negative-bg px-4 py-2 text-sm text-canvas">{activityError}</p>
+          )}
 
           <Card>
             <CardHeader>
@@ -101,11 +153,13 @@ export function TaskDetailPanel() {
             <CardBody className="space-y-4">
               <form onSubmit={handleComment} className="flex gap-2">
                 <Input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add a comment…" />
-                <Button variant="primary" type="submit" disabled={!draft.trim()}>
+                <Button variant="primary" type="submit" disabled={!draft.trim() || posting}>
                   Post
                 </Button>
               </form>
-              {comments.length === 0 ? (
+              {activityLoading ? (
+                <p className="text-sm text-mute">Loading…</p>
+              ) : comments.length === 0 ? (
                 <p className="text-sm text-mute">No comments yet — be the first to add context.</p>
               ) : (
                 <ul className="space-y-3">
@@ -126,7 +180,9 @@ export function TaskDetailPanel() {
               <CardTitle>Audit trail</CardTitle>
             </CardHeader>
             <CardBody>
-              {audit.length === 0 ? (
+              {activityLoading ? (
+                <p className="text-sm text-mute">Loading…</p>
+              ) : audit.length === 0 ? (
                 <p className="text-sm text-mute">No activity yet.</p>
               ) : (
                 <ol className="space-y-3 border-l border-canvas-soft pl-4">

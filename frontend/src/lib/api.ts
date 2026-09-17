@@ -23,6 +23,19 @@ import type {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// Thrown for any non-2xx response. Carries the HTTP status so callers can
+// distinguish "not authorized" (403) / "conflict" (409) from other failures
+// if they ever need to branch on it — today every caller just surfaces
+// `.message` in a toast, but the status is there rather than discarded.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 function authHeaders(): HeadersInit {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -39,7 +52,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Request failed");
+    throw new ApiError(detail.detail ?? "Request failed", res.status);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -64,14 +77,21 @@ export const api = {
     request<User>(`/users/${userId}`, { method: "PATCH", body: JSON.stringify(input) }),
 
   listProjects: () => request<Project[]>("/projects"),
+  getProject: (projectId: string) => request<Project>(`/projects/${projectId}`),
   createProject: (name: string, description?: string) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify({ name, description }) }),
 
-  listTasks: (params?: { projectId?: string; assigneeId?: string; status?: TaskStatus }) => {
+  listTasks: (params?: {
+    projectId?: string;
+    assigneeId?: string;
+    status?: TaskStatus;
+    managerId?: string;
+  }) => {
     const query = new URLSearchParams();
     if (params?.projectId) query.set("project_id", params.projectId);
     if (params?.assigneeId) query.set("assignee_id", params.assigneeId);
     if (params?.status) query.set("status_filter", params.status);
+    if (params?.managerId) query.set("manager_id", params.managerId);
     const qs = query.toString();
     return request<Task[]>(`/tasks${qs ? `?${qs}` : ""}`);
   },
@@ -107,6 +127,12 @@ export const api = {
     request<Comment>(`/tasks/${taskId}/comments`, { method: "POST", body: JSON.stringify({ body }) }),
   listAudit: (taskId: string) => request<AuditEntry[]>(`/tasks/${taskId}/audit`),
 
+  listTimeEntries: (params?: { taskId?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.taskId) query.set("task_id", params.taskId);
+    const qs = query.toString();
+    return request<TimeEntry[]>(`/time-entries${qs ? `?${qs}` : ""}`);
+  },
   listOpenTimers: () => request<TimeEntry[]>("/time-entries/open"),
   startTimer: (taskId: string) =>
     request<TimeEntry>(`/time-entries/start?task_id=${taskId}`, { method: "POST" }),

@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Task } from "@/lib/types";
+import type { Task, TimeEntry } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
-import { canResume, canStart, elapsedSeconds, openEntryForTask } from "@/prototype/board/engine";
-import { formatDuration } from "@/prototype/board/format";
-import { usePrototypeBoard } from "@/prototype/board/store";
+import { canResume, canStart, elapsedSeconds, openEntryForTask } from "@/board/engine";
+import { formatDuration } from "@/board/format";
 
 function PlayIcon() {
   return (
@@ -38,21 +37,52 @@ function CheckIcon() {
 
 interface TimerControlsProps {
   task: Task;
+  /** The current user's own open (non-stopped) timer entries, across all
+   * their tasks — from `GET /time-entries/open`. Used both to find this
+   * task's own entry and to evaluate the "only one running" guard. */
+  entries: TimeEntry[];
+  currentUserId: string;
+  /** Whether the current user may drive this task's timer at all
+   * (assignee/creator/admin — see `engine.canEditTask`). If false, no
+   * buttons are rendered — a click would just 403. */
+  canEdit: boolean;
+  isPending: boolean;
+  onStart: (taskId: string) => void;
+  onPause: (entry: TimeEntry) => void;
+  onResume: (entry: TimeEntry) => void;
+  onStop: (entry: TimeEntry) => void;
   size?: "sm" | "md";
+  /** The stopped entry for a completed task, if known (only resolvable for
+   * the entry's owner — see `useCompletedEntry`). Shows total duration when
+   * present; otherwise the "Completed" pill just omits the duration. */
+  completedEntry?: TimeEntry | null;
 }
 
 /**
  * Renders exactly what docs/design/kanban-timer-design.md §3 allows for a
  * task's current state: Start (To Do/On Hold, no open entry), Pause (only
- * the running entry), Resume (only a paused entry), Stop (terminal, always
- * available on an open entry, two-step confirm since it can't be undone).
+ * the running entry), Resume (only a paused entry), Stop (terminal, two-step
+ * confirm since it can't be undone). All state comes from props so this
+ * works identically on the board (via `useBoard`) and the standalone task
+ * detail page (via `useTimerSession`).
  */
-export function TimerControls({ task, size = "sm" }: TimerControlsProps) {
-  const board = usePrototypeBoard();
-  const engineState = { tasks: board.tasks, entries: board.entries, audit: board.audit, comments: board.comments };
-  const ownEntry = openEntryForTask(board.entries, task.id);
+export function TimerControls({
+  task,
+  entries,
+  currentUserId,
+  canEdit,
+  isPending,
+  onStart,
+  onPause,
+  onResume,
+  onStop,
+  size = "sm",
+  completedEntry = null,
+}: TimerControlsProps) {
+  const engineState = { tasks: [task], entries };
+  const ownEntry = openEntryForTask(entries, task.id);
 
-  // Seeded elapsed time depends on Date.now(), which differs between the
+  // Elapsed time depends on Date.now(), which differs between the
   // server-rendered HTML and the client's first paint — start at null (same
   // on server and client) and fill in the real value only after mount so
   // React never sees a hydration mismatch on this text node.
@@ -77,7 +107,7 @@ export function TimerControls({ task, size = "sm" }: TimerControlsProps) {
     []
   );
 
-  const requestStop = (entryId: string) => {
+  const requestStop = (entry: TimeEntry) => {
     if (!confirmingStop) {
       setConfirmingStop(true);
       confirmTimeout.current = setTimeout(() => setConfirmingStop(false), 4000);
@@ -85,32 +115,40 @@ export function TimerControls({ task, size = "sm" }: TimerControlsProps) {
     }
     if (confirmTimeout.current) clearTimeout(confirmTimeout.current);
     setConfirmingStop(false);
-    board.stop(entryId);
+    onStop(entry);
   };
 
   if (task.status === "completed") {
-    const stoppedEntry = board.entries.find((e) => e.task_id === task.id && e.status === "stopped");
     return (
       <div className="flex items-center gap-1.5 text-xs font-semibold text-positive-deep">
         <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary-pale text-positive-deep">
           <CheckIcon />
         </span>
         Completed
-        {stoppedEntry && <span className="font-mono text-mute">· {formatDuration(stoppedEntry.accumulated_seconds)}</span>}
+        {completedEntry && (
+          <span className="font-mono text-mute">· {formatDuration(completedEntry.accumulated_seconds)}</span>
+        )}
       </div>
     );
   }
 
+  if (!canEdit) {
+    // Visible, not a silent no-op: the viewer can see this task (it's on
+    // their board) but isn't its assignee/creator/admin, so the backend
+    // would 403 on any timer action — don't offer buttons that can't work.
+    return <span className="text-[11px] italic text-mute">Only the assignee can control this timer</span>;
+  }
+
   if (!ownEntry) {
     if (task.status !== "todo" && task.status !== "on_hold") return null;
-    const check = canStart(engineState, task.id);
+    const check = canStart(engineState, task.id, currentUserId);
     return (
       <div className="flex flex-col items-start gap-1">
         <Button
           size={size}
           variant="primary"
-          disabled={!check.ok}
-          onClick={() => board.start(task.id)}
+          disabled={!check.ok || isPending}
+          onClick={() => onStart(task.id)}
           className="shadow-none"
         >
           <PlayIcon /> Start
@@ -139,15 +177,20 @@ export function TimerControls({ task, size = "sm" }: TimerControlsProps) {
       </span>
 
       {ownEntry.status === "running" ? (
-        <Button size={size} variant="secondary" onClick={() => board.pause(ownEntry.id)}>
+        <Button size={size} variant="secondary" disabled={isPending} onClick={() => onPause(ownEntry)}>
           <PauseIcon /> Pause
         </Button>
       ) : (
         (() => {
-          const check = canResume(engineState, ownEntry.id);
+          const check = canResume(engineState, ownEntry.id, currentUserId);
           return (
             <div className="flex flex-col items-start gap-1">
-              <Button size={size} variant="primary" disabled={!check.ok} onClick={() => board.resume(ownEntry.id)}>
+              <Button
+                size={size}
+                variant="primary"
+                disabled={!check.ok || isPending}
+                onClick={() => onResume(ownEntry)}
+              >
                 <PlayIcon /> Resume
               </Button>
               {!check.ok && <span className="text-[11px] leading-tight text-mute">{check.reason}</span>}
@@ -159,7 +202,8 @@ export function TimerControls({ task, size = "sm" }: TimerControlsProps) {
       <Button
         size={size}
         variant="danger"
-        onClick={() => requestStop(ownEntry.id)}
+        disabled={isPending}
+        onClick={() => requestStop(ownEntry)}
         title={confirmingStop ? "Click again to confirm — this can't be undone" : "Stop is irreversible"}
         className={confirmingStop ? "animate-pulse" : undefined}
       >

@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { TASK_CATEGORIES } from "@/lib/types";
-import type { AuditEntry, Comment, Task, TimeEntry, User } from "@/lib/types";
-import { TimerControls } from "@/components/TimerControls";
+import type { AuditEntry, Comment, Task, User } from "@/lib/types";
+import { useCompletedEntry, useTimerSession } from "@/board/session";
+import { TimerControls } from "@/app/board/TimerControls";
+import { Toast } from "@/app/board/Toast";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -20,29 +22,43 @@ export default function TaskDetailPage() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [openEntries, setOpenEntries] = useState<TimeEntry[]>([]);
   const [newComment, setNewComment] = useState("");
+  const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = () => {
+  const loadTask = useCallback(() => {
     api.getTask(taskId).then(setTask).catch((e) => setError(e.message));
+  }, [taskId]);
+
+  const session = useTimerSession({ onMutated: loadTask });
+  const completedEntry = useCompletedEntry(task);
+
+  const load = useCallback(() => {
+    loadTask();
     api.listComments(taskId).then(setComments).catch(console.error);
     api.listAudit(taskId).then(setAudit).catch(console.error);
     api.listUsers().then(setUsers).catch(console.error);
-    api.listOpenTimers().then(setOpenEntries).catch(console.error);
-  };
+  }, [taskId, loadTask]);
 
-  useEffect(load, [taskId]);
+  useEffect(load, [load]);
 
   const handleComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim()) return;
-    await api.addComment(taskId, newComment.trim());
-    setNewComment("");
-    load();
+    setPosting(true);
+    try {
+      await api.addComment(taskId, newComment.trim());
+      setNewComment("");
+      await Promise.all([api.listComments(taskId).then(setComments), api.listAudit(taskId).then(setAudit)]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not post comment");
+    } finally {
+      setPosting(false);
+    }
   };
 
-  const authorName = (id: string) => users.find((u) => u.id === id)?.full_name ?? id;
+  const authorName = (id: string) =>
+    id === session.currentUser?.id ? "You" : users.find((u) => u.id === id)?.full_name ?? id;
 
   if (error)
     return (
@@ -78,7 +94,19 @@ export default function TaskDetailPage() {
             </div>
             {task.description && <p className="mt-4 text-sm text-body">{task.description}</p>}
             <div className="mt-4">
-              <TimerControls task={task} openEntries={openEntries} onChange={load} />
+              <TimerControls
+                task={task}
+                entries={session.entries}
+                currentUserId={session.currentUser?.id ?? ""}
+                canEdit={session.canEditTask(task)}
+                isPending={session.isPending(task.id)}
+                onStart={session.start}
+                onPause={session.pause}
+                onResume={session.resume}
+                onStop={session.stop}
+                size="md"
+                completedEntry={completedEntry}
+              />
             </div>
           </div>
 
@@ -93,7 +121,7 @@ export default function TaskDetailPage() {
                   onChange={(e) => setNewComment(e.target.value)}
                   placeholder="Add a comment"
                 />
-                <Button variant="primary" type="submit">
+                <Button variant="primary" type="submit" disabled={!newComment.trim() || posting}>
                   Post
                 </Button>
               </form>
@@ -140,6 +168,7 @@ export default function TaskDetailPage() {
           </CardBody>
         </Card>
       </div>
+      <Toast toast={session.toast} dismissToast={session.dismissToast} />
     </main>
   );
 }
