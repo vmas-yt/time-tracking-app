@@ -1,6 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, PlainSerializer, model_validator
 
 from app.models import (
     AuditAction,
@@ -14,6 +15,28 @@ from app.models import (
     UserRole,
 )
 
+
+def _serialize_utc(dt: datetime) -> str:
+    """All stored datetimes come from datetime.utcnow() (naive, but UTC).
+    Serialized bare, a client's `new Date(...)` parses that string as local
+    time rather than UTC, shifting every timestamp by the viewer's UTC
+    offset. Stamping the 'Z' suffix here — rather than switching every
+    datetime.utcnow() call and DateTime column to be timezone-aware, a much
+    larger change for the same DB-level result — makes the wire format
+    unambiguous without touching how times are stored.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+UTCDatetime = Annotated[datetime, PlainSerializer(_serialize_utc, return_type=str, when_used="json")]
+
+
+class UTCModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ---- Users ----------------------------------------------------------------
 
 
@@ -26,13 +49,11 @@ class UserCreate(UserBase):
     password: str
 
 
-class UserRead(UserBase):
-    model_config = ConfigDict(from_attributes=True)
-
+class UserRead(UserBase, UTCModel):
     id: str
     role: UserRole
     manager_id: str | None
-    created_at: datetime
+    created_at: UTCDatetime
 
 
 class UserUpdate(BaseModel):
@@ -57,11 +78,9 @@ class ProjectCreate(ProjectBase):
     pass
 
 
-class ProjectRead(ProjectBase):
-    model_config = ConfigDict(from_attributes=True)
-
+class ProjectRead(ProjectBase, UTCModel):
     id: str
-    created_at: datetime
+    created_at: UTCDatetime
 
 
 # ---- Tasks ------------------------------------------------------------------
@@ -103,16 +122,14 @@ class TaskUpdate(BaseModel):
     custom_values: dict[str, str] | None = None
 
 
-class TaskRead(TaskBase):
-    model_config = ConfigDict(from_attributes=True)
-
+class TaskRead(TaskBase, UTCModel):
     id: str
     created_by_id: str
     status: TaskStatus
     position: int
-    created_at: datetime
-    updated_at: datetime
-    completed_at: datetime | None
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
+    completed_at: UTCDatetime | None
     custom_values: dict[str, str] = {}
 
 
@@ -123,41 +140,35 @@ class CommentCreate(BaseModel):
     body: str
 
 
-class CommentRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class CommentRead(UTCModel):
     id: str
     task_id: str
     author_id: str
     body: str
-    created_at: datetime
+    created_at: UTCDatetime
 
 
-class AuditEntryRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class AuditEntryRead(UTCModel):
     id: str
     task_id: str
     actor_id: str
     action: AuditAction
     detail: str
-    created_at: datetime
+    created_at: UTCDatetime
 
 
 # ---- Time entries -------------------------------------------------------------
 
 
-class TimeEntryRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class TimeEntryRead(UTCModel):
     id: str
     task_id: str
     user_id: str
     status: TimerStatus
-    started_at: datetime
-    last_resumed_at: datetime | None
+    started_at: UTCDatetime
+    last_resumed_at: UTCDatetime | None
     accumulated_seconds: float
-    ended_at: datetime | None
+    ended_at: UTCDatetime | None
     elapsed_seconds: float = 0.0
 
 
@@ -170,19 +181,17 @@ class CustomFieldCreate(BaseModel):
     options: list[str] | None = None
 
 
-class CustomFieldRead(BaseModel):
+class CustomFieldRead(UTCModel):
     id: str
     name: str
     field_type: CustomFieldType
     options: list[str] | None = None
-    created_at: datetime
+    created_at: UTCDatetime
 
 
-class BoardConfigRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class BoardConfigRead(UTCModel):
     swimlane_field: SwimlaneField
-    updated_at: datetime
+    updated_at: UTCDatetime
 
 
 class BoardConfigUpdate(BaseModel):
@@ -192,19 +201,19 @@ class BoardConfigUpdate(BaseModel):
 # ---- Reporting -----------------------------------------------------------------
 
 
-class CycleTimePoint(BaseModel):
+class CycleTimePoint(UTCModel):
     task_id: str
     title: str
-    started_at: datetime
-    completed_at: datetime
+    started_at: UTCDatetime
+    completed_at: UTCDatetime
     cycle_time_seconds: float
 
 
-class LeadTimePoint(BaseModel):
+class LeadTimePoint(UTCModel):
     task_id: str
     title: str
-    created_at: datetime
-    completed_at: datetime
+    created_at: UTCDatetime
+    completed_at: UTCDatetime
     lead_time_seconds: float
 
 
@@ -218,9 +227,9 @@ class CumulativeFlowPoint(BaseModel):
     counts: dict[str, int]
 
 
-class ReminderCandidate(BaseModel):
+class ReminderCandidate(UTCModel):
     user_id: str
     full_name: str
     email: str
     manager_id: str | None
-    last_logged_at: datetime | None
+    last_logged_at: UTCDatetime | None
