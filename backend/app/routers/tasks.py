@@ -26,6 +26,7 @@ from app.schemas import (
 )
 from app.services.authz import assert_can_edit_task, assert_can_view_task
 from app.services.tasks import change_status, record_audit, record_status_event
+from app.services.users import validate_assignee_active
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -90,6 +91,7 @@ def list_tasks(
 def create_task(
     task_in: TaskCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
+    validate_assignee_active(db, task_in.assignee_id)
     task = Task(
         **task_in.model_dump(),
         created_by_id=current_user.id,
@@ -123,6 +125,9 @@ def update_task(
     task = _get_task_or_404(db, task_id)
     assert_can_edit_task(current_user, task)
     updates = task_in.model_dump(exclude_unset=True, exclude={"status", "custom_values"})
+
+    if "assignee_id" in updates:
+        validate_assignee_active(db, updates["assignee_id"])
 
     if updates:
         for field, value in updates.items():

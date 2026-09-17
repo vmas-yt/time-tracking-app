@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     # actual host via `fromService`/`property: host` (a bare host, no scheme).
     cors_extra_origin_host: str | None = None
 
+    # One-time cold-start seed for the first admin account, since
+    # self-registration no longer exists (see app/services/bootstrap.py).
+    bootstrap_admin_email: str | None = None
+    bootstrap_admin_password: str | None = None
+    bootstrap_admin_name: str = "Admin"
+
     @property
     def effective_cors_origins(self) -> list[str]:
         if not self.cors_extra_origin_host:

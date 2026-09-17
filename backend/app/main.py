@@ -4,8 +4,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.database import Base, engine
+from app.database import Base, SessionLocal, engine
 from app.routers import admin, auth, notifications, projects, reports, tasks, time_entries, users
+from app.services.bootstrap import ensure_bootstrap_admin
+from app.services.migrations import ensure_schema_migrations
 
 settings = get_settings()
 
@@ -13,6 +15,12 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    ensure_schema_migrations(engine)
+    db = SessionLocal()
+    try:
+        ensure_bootstrap_admin(db)
+    finally:
+        db.close()
     yield
 
 

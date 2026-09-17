@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, PlainSerializer, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, PlainSerializer, model_validator
 
 from app.models import (
     AuditAction,
@@ -46,19 +46,34 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str
+    role: UserRole = UserRole.EMPLOYEE
+    manager_id: str | None = None
+    password: str = Field(min_length=8)
 
 
 class UserRead(UserBase, UTCModel):
     id: str
     role: UserRole
     manager_id: str | None
+    is_active: bool
     created_at: UTCDatetime
 
 
 class UserUpdate(BaseModel):
+    full_name: str | None = None
+    email: EmailStr | None = None
     role: UserRole | None = None
     manager_id: str | None = None
+    is_active: bool | None = None
+
+
+class PasswordResetRequest(BaseModel):
+    new_password: str = Field(min_length=8)
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
 
 
 class Token(BaseModel):

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import AuditAction, Task, TaskStatus, TimeEntry, TimerStatus, User
+from app.models import AuditAction, Task, TaskStatus, TimeEntry, TimerStatus, User, UserRole
 from app.schemas import TimeEntryRead
 from app.services.authz import assert_can_edit_task
 from app.services.tasks import record_audit, record_status_event
@@ -29,9 +29,15 @@ def _serialize(entry: TimeEntry) -> TimeEntryRead:
     return data
 
 
-def _get_owned_entry(db: Session, entry_id: str, user_id: str) -> TimeEntry:
+def _get_owned_entry(db: Session, entry_id: str, current_user: User) -> TimeEntry:
+    """Non-admins may only reach their own entries (404, not 403, to avoid
+    revealing existence). Admins may fetch any entry by id — the operational
+    override for pause/resume/stop (design doc §9.2); `start` doesn't call
+    this at all, see `start_timer`, since it's tightened to assignee-only."""
     entry = db.get(TimeEntry, entry_id)
-    if not entry or entry.user_id != user_id:
+    if not entry:
+        raise HTTPException(status_code=404, detail="Time entry not found")
+    if current_user.role != UserRole.ADMIN and entry.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Time entry not found")
     return entry
 
@@ -39,10 +45,34 @@ def _get_owned_entry(db: Session, entry_id: str, user_id: str) -> TimeEntry:
 @router.get("", response_model=list[TimeEntryRead])
 def list_time_entries(
     task_id: str | None = None,
+    user_id: str | None = None,
+    manager_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(TimeEntry).filter(TimeEntry.user_id == current_user.id)
+    """No params: caller's own entries (unchanged). `user_id`: that user's
+    entries, allowed for the user themself, their direct manager, or an
+    admin. `manager_id`: every entry belonging to that manager's direct
+    reports, allowed for that manager or an admin. Mutually exclusive."""
+    if user_id and manager_id:
+        raise HTTPException(status_code=400, detail="user_id and manager_id are mutually exclusive")
+
+    if user_id:
+        target = db.get(User, user_id)
+        is_self = user_id == current_user.id
+        is_their_manager = target is not None and target.manager_id == current_user.id
+        if not (is_self or is_their_manager or current_user.role == UserRole.ADMIN):
+            raise HTTPException(status_code=403, detail="Not authorized to view this user's time entries")
+        query = db.query(TimeEntry).filter(TimeEntry.user_id == user_id)
+    elif manager_id:
+        if not (manager_id == current_user.id or current_user.role == UserRole.ADMIN):
+            raise HTTPException(status_code=403, detail="Not authorized to view this team's time entries")
+        query = db.query(TimeEntry).join(User, TimeEntry.user_id == User.id).filter(
+            User.manager_id == manager_id
+        )
+    else:
+        query = db.query(TimeEntry).filter(TimeEntry.user_id == current_user.id)
+
     if task_id:
         query = query.filter(TimeEntry.task_id == task_id)
     return [_serialize(e) for e in query.order_by(TimeEntry.started_at.desc()).all()]
@@ -62,7 +92,14 @@ def start_timer(
     task = db.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    assert_can_edit_task(current_user, task)
+    # Tightened to assignee-only (design doc §9.1): a task's creator or an
+    # admin may edit the task, but starting a timer always attributes the
+    # new entry to current_user, so only the assignee — the person actually
+    # about to do the work — may start it. This drops the creator/admin
+    # bypass that assert_can_edit_task would otherwise grant, for this one
+    # action only.
+    if current_user.id != task.assignee_id:
+        raise HTTPException(status_code=403, detail="Only the task's assignee may start its timer")
     if task.status not in (TaskStatus.TODO, TaskStatus.ON_HOLD):
         raise HTTPException(
             status_code=409, detail="Timer can only be started from 'To Do' or 'On Hold'"
@@ -109,7 +146,7 @@ def start_timer(
 def pause_timer(
     entry_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    entry = _get_owned_entry(db, entry_id, current_user.id)
+    entry = _get_owned_entry(db, entry_id, current_user)
     assert_can_edit_task(current_user, entry.task)
     if entry.status != TimerStatus.RUNNING:
         raise HTTPException(status_code=409, detail=f"Cannot pause a timer in '{entry.status.value}' state")
@@ -124,11 +161,14 @@ def pause_timer(
 def resume_timer(
     entry_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    entry = _get_owned_entry(db, entry_id, current_user.id)
+    entry = _get_owned_entry(db, entry_id, current_user)
     assert_can_edit_task(current_user, entry.task)
     if entry.status != TimerStatus.PAUSED:
         raise HTTPException(status_code=409, detail=f"Cannot resume a timer in '{entry.status.value}' state")
-    other_running = running_entry_for_user(db, current_user.id)
+    # Concurrency check is scoped to the entry's owner, not the caller — an
+    # admin resuming someone else's timer shouldn't be blocked by (or block)
+    # the admin's own running timer, if any.
+    other_running = running_entry_for_user(db, entry.user_id)
     if other_running is not None and other_running.id != entry.id:
         raise HTTPException(status_code=409, detail="You already have a timer running on another task")
 
@@ -158,7 +198,7 @@ def resume_timer(
 def stop_timer(
     entry_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    entry = _get_owned_entry(db, entry_id, current_user.id)
+    entry = _get_owned_entry(db, entry_id, current_user)
     assert_can_edit_task(current_user, entry.task)
     if entry.status == TimerStatus.STOPPED:
         raise HTTPException(status_code=409, detail="Timer is already stopped")

@@ -23,4 +23,9 @@ def get_current_user(
     user = db.query(User).filter(User.email == email).first()
     if user is None:
         raise credentials_exception
+    if not user.is_active:
+        # Same shape as an invalid token: a deactivated user's already-issued
+        # JWT (stateless, lives up to access_token_expire_minutes) must stop
+        # working on their very next request, not at natural expiry.
+        raise credentials_exception
     return user

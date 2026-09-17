@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Project, User
+from app.models import Project, Task, User
 from app.schemas import ProjectCreate, ProjectRead
+from app.services.authz import assert_admin
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -20,6 +21,7 @@ def create_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    assert_admin(current_user)
     project = Project(**project_in.model_dump())
     db.add(project)
     db.commit()
@@ -41,8 +43,15 @@ def get_project(
 def delete_project(
     project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
+    assert_admin(current_user)
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    has_tasks = db.query(Task).filter(Task.project_id == project_id).first() is not None
+    if has_tasks:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete a project with tasks linked to it.",
+        )
     db.delete(project)
     db.commit()

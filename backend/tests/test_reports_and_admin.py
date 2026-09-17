@@ -31,7 +31,7 @@ def test_cumulative_flow_reflects_current_statuses(client, auth_headers, backlog
     assert today["counts"].get("backlog") == 1
 
 
-def test_admin_can_configure_board_and_first_user_is_admin(client, auth_headers):
+def test_admin_can_configure_board_and_bootstrap_user_is_admin(client, auth_headers):
     me = client.get("/users/me", headers=auth_headers).json()
     assert me["role"] == "admin"
 
@@ -44,8 +44,9 @@ def test_admin_can_configure_board_and_first_user_is_admin(client, auth_headers)
 
 def test_non_admin_cannot_configure_board(client, auth_headers):
     client.post(
-        "/auth/register",
+        "/users",
         json={"email": "employee@example.com", "full_name": "Employee", "password": "password123"},
+        headers=auth_headers,
     )
     token = client.post(
         "/auth/login", data={"username": "employee@example.com", "password": "password123"}

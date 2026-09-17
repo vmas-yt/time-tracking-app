@@ -4,19 +4,26 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core.security import hash_password
 from app.database import Base, get_db
 from app.main import app
+from app.models import User, UserRole
 
 
 @pytest.fixture()
-def client():
+def db_engine():
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
+    return engine
+
+
+@pytest.fixture()
+def client(db_engine):
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=db_engine)
 
     def override_get_db():
         db = TestingSessionLocal()
@@ -32,13 +39,31 @@ def client():
 
 
 @pytest.fixture()
-def auth_headers(client):
-    """Registers the first user of the (fresh, in-memory) database, which
-    bootstraps to the admin role."""
-    client.post(
-        "/auth/register",
-        json={"email": "dev@example.com", "full_name": "Dev User", "password": "password123"},
-    )
+def auth_headers(client, db_engine):
+    """`POST /auth/register` no longer exists — only an admin can create
+    accounts (see docs/design/auth-rbac-design.md §4.1). Tests seed the
+    bootstrap admin directly into the test DB (mirroring what
+    `app/services/bootstrap.py::ensure_bootstrap_admin` does on a real
+    cold-start deploy, which this in-memory test engine never runs through
+    `main.py`'s lifespan against), then log in as that admin. Tests that
+    need additional employee/manager accounts create them via `POST /users`
+    using these headers.
+    """
+    TestingSessionLocal = sessionmaker(bind=db_engine)
+    db = TestingSessionLocal()
+    try:
+        admin = User(
+            email="dev@example.com",
+            full_name="Dev User",
+            hashed_password=hash_password("password123"),
+            role=UserRole.ADMIN,
+            is_active=True,
+        )
+        db.add(admin)
+        db.commit()
+    finally:
+        db.close()
+
     resp = client.post(
         "/auth/login", data={"username": "dev@example.com", "password": "password123"}
     )

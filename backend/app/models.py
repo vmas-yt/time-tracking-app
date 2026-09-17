@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, String, Text, text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -96,6 +96,8 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.EMPLOYEE, nullable=False)
     manager_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     manager: Mapped["User | None"] = relationship(remote_side="User.id")
     assigned_tasks: Mapped[list["Task"]] = relationship(

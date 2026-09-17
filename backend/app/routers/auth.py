@@ -1,32 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import create_access_token, verify_password
 from app.database import get_db
-from app.models import User, UserRole
-from app.schemas import Token, UserCreate, UserRead
+from app.models import User
+from app.schemas import Token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def register(user_in: UserCreate, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.email == user_in.email).first():
-        raise HTTPException(status_code=400, detail="Email already registered")
-    # Bootstrap: the very first account in a fresh deployment becomes admin,
-    # so there's someone able to configure the board/custom fields/roles.
-    is_first_user = db.query(User).count() == 0
-    user = User(
-        email=user_in.email,
-        full_name=user_in.full_name,
-        hashed_password=hash_password(user_in.password),
-        role=UserRole.ADMIN if is_first_user else UserRole.EMPLOYEE,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
 
 
 @router.post("/login", response_model=Token)
@@ -34,5 +15,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
+    if not user.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="This account has been deactivated. Contact your administrator.",
+        )
     token = create_access_token(subject=user.email)
     return Token(access_token=token)

@@ -2,17 +2,18 @@
 task-deletion safety guard — the GAPs flagged in
 docs/design/kanban-timer-design.md §1.2 against the current backend.
 
-`auth_headers` (see conftest.py) is the first-registered user, which
-bootstraps to admin and owns/creates its own tasks by default, so these
-tests always spin up additional employee/manager accounts explicitly to
-exercise the non-admin paths.
+`auth_headers` (see conftest.py) is a bootstrap admin seeded directly into
+the test DB, since `POST /auth/register` no longer exists — these tests use
+that admin's headers to create whatever employee/manager accounts they need
+via `POST /users`.
 """
 
 
-def _register(client, email, full_name="User"):
+def _register(client, auth_headers, email, full_name="User", role="employee"):
     client.post(
-        "/auth/register",
-        json={"email": email, "full_name": full_name, "password": "password123"},
+        "/users",
+        json={"email": email, "full_name": full_name, "password": "password123", "role": role},
+        headers=auth_headers,
     )
     token = client.post(
         "/auth/login", data={"username": email, "password": "password123"}
@@ -30,8 +31,8 @@ def _make_task(client, headers, title="Task", **overrides):
 
 
 def test_unrelated_employee_cannot_view_task(client, auth_headers):
-    owner_headers = _register(client, "owner1@example.com")
-    outsider_headers = _register(client, "outsider1@example.com")
+    owner_headers = _register(client, auth_headers, "owner1@example.com")
+    outsider_headers = _register(client, auth_headers, "outsider1@example.com")
     task = _make_task(client, owner_headers, "Owner's task")
 
     resp = client.get(f"/tasks/{task['id']}", headers=outsider_headers)
@@ -39,8 +40,8 @@ def test_unrelated_employee_cannot_view_task(client, auth_headers):
 
 
 def test_unrelated_employee_cannot_edit_or_delete_task(client, auth_headers):
-    owner_headers = _register(client, "owner2@example.com")
-    outsider_headers = _register(client, "outsider2@example.com")
+    owner_headers = _register(client, auth_headers, "owner2@example.com")
+    outsider_headers = _register(client, auth_headers, "outsider2@example.com")
     task = _make_task(client, owner_headers, "Owner's task")
 
     resp = client.patch(f"/tasks/{task['id']}", json={"title": "hacked"}, headers=outsider_headers)
@@ -51,10 +52,10 @@ def test_unrelated_employee_cannot_edit_or_delete_task(client, auth_headers):
 
 
 def test_manager_can_view_but_not_edit_reports_task(client, auth_headers):
-    manager_headers = _register(client, "manager1@example.com")
+    manager_headers = _register(client, auth_headers, "manager1@example.com", role="manager")
     manager = client.get("/users/me", headers=manager_headers).json()
 
-    report_headers = _register(client, "report1@example.com")
+    report_headers = _register(client, auth_headers, "report1@example.com")
     report_user = client.get("/users/me", headers=report_headers).json()
     client.patch(
         f"/users/{report_user['id']}", json={"manager_id": manager["id"]}, headers=auth_headers
@@ -75,7 +76,7 @@ def test_manager_can_view_but_not_edit_reports_task(client, auth_headers):
 
 
 def test_admin_can_view_and_edit_any_task(client, auth_headers):
-    owner_headers = _register(client, "owner3@example.com")
+    owner_headers = _register(client, auth_headers, "owner3@example.com")
     task = _make_task(client, owner_headers, "Someone else's task")
 
     assert client.get(f"/tasks/{task['id']}", headers=auth_headers).status_code == 200
@@ -85,8 +86,8 @@ def test_admin_can_view_and_edit_any_task(client, auth_headers):
 
 
 def test_unrelated_employee_cannot_start_timer_on_others_task(client, auth_headers):
-    owner_headers = _register(client, "owner4@example.com")
-    outsider_headers = _register(client, "outsider4@example.com")
+    owner_headers = _register(client, auth_headers, "owner4@example.com")
+    outsider_headers = _register(client, auth_headers, "outsider4@example.com")
     task = _make_task(client, owner_headers, "Owner's task")
     client.patch(f"/tasks/{task['id']}", json={"status": "todo"}, headers=owner_headers)
 
@@ -95,10 +96,10 @@ def test_unrelated_employee_cannot_start_timer_on_others_task(client, auth_heade
 
 
 def test_manager_cannot_start_pause_or_stop_reports_timer(client, auth_headers):
-    manager_headers = _register(client, "manager2@example.com")
+    manager_headers = _register(client, auth_headers, "manager2@example.com", role="manager")
     manager = client.get("/users/me", headers=manager_headers).json()
 
-    report_headers = _register(client, "report2@example.com")
+    report_headers = _register(client, auth_headers, "report2@example.com")
     report_user = client.get("/users/me", headers=report_headers).json()
     client.patch(
         f"/users/{report_user['id']}", json={"manager_id": manager["id"]}, headers=auth_headers
@@ -118,14 +119,48 @@ def test_manager_cannot_start_pause_or_stop_reports_timer(client, auth_headers):
     assert resp.status_code == 404  # entry isn't owned by the manager
 
 
+def test_admin_can_pause_resume_and_stop_someone_elses_timer(client, auth_headers):
+    """New admin override (design doc §9.2) — an admin can operate
+    pause/resume/stop on any user's time entry, unlike a manager."""
+    employee_headers = _register(client, auth_headers, "employee_override@example.com")
+    task = _make_task(client, employee_headers, "Employee's task")
+    client.patch(f"/tasks/{task['id']}", json={"status": "todo"}, headers=employee_headers)
+    entry = client.post(
+        f"/time-entries/start?task_id={task['id']}", headers=employee_headers
+    ).json()
+
+    resp = client.post(f"/time-entries/{entry['id']}/pause", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "paused"
+
+    resp = client.post(f"/time-entries/{entry['id']}/resume", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "running"
+
+    resp = client.post(f"/time-entries/{entry['id']}/stop", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "stopped"
+
+
+def test_admin_cannot_start_timer_on_someone_elses_task(client, auth_headers):
+    """Tightened per design doc §9.1: even an admin loses `start`, since it
+    always attributes new time to current_user."""
+    employee_headers = _register(client, auth_headers, "employee_no_admin_start@example.com")
+    task = _make_task(client, employee_headers, "Employee's task")
+    client.patch(f"/tasks/{task['id']}", json={"status": "todo"}, headers=employee_headers)
+
+    resp = client.post(f"/time-entries/start?task_id={task['id']}", headers=auth_headers)
+    assert resp.status_code == 403
+
+
 # ---- "My team" manager-scoped list filter ----
 
 
 def test_list_tasks_manager_filter_returns_reports_tasks(client, auth_headers):
-    manager_headers = _register(client, "manager3@example.com")
+    manager_headers = _register(client, auth_headers, "manager3@example.com", role="manager")
     manager = client.get("/users/me", headers=manager_headers).json()
 
-    report_headers = _register(client, "report3@example.com")
+    report_headers = _register(client, auth_headers, "report3@example.com")
     report_user = client.get("/users/me", headers=report_headers).json()
     client.patch(
         f"/users/{report_user['id']}", json={"manager_id": manager["id"]}, headers=auth_headers
@@ -140,8 +175,8 @@ def test_list_tasks_manager_filter_returns_reports_tasks(client, auth_headers):
 
 
 def test_list_tasks_hides_unrelated_tasks_from_employees(client, auth_headers):
-    owner_headers = _register(client, "owner5@example.com")
-    outsider_headers = _register(client, "outsider5@example.com")
+    owner_headers = _register(client, auth_headers, "owner5@example.com")
+    outsider_headers = _register(client, auth_headers, "outsider5@example.com")
     _make_task(client, owner_headers, "Private task")
 
     resp = client.get("/tasks", headers=outsider_headers)
@@ -151,7 +186,7 @@ def test_list_tasks_hides_unrelated_tasks_from_employees(client, auth_headers):
 
 
 def test_list_tasks_admin_sees_everything(client, auth_headers):
-    owner_headers = _register(client, "owner6@example.com")
+    owner_headers = _register(client, auth_headers, "owner6@example.com")
     _make_task(client, owner_headers, "Someone's task")
 
     resp = client.get("/tasks", headers=auth_headers)

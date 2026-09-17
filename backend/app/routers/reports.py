@@ -2,11 +2,12 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Task, TaskStatus, TaskStatusEvent, User
+from app.models import Task, TaskStatus, TaskStatusEvent, User, UserRole
 from app.schemas import (
     CumulativeFlowPoint,
     CycleTimePoint,
@@ -17,10 +18,28 @@ from app.schemas import (
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
-def _completed_tasks(db: Session, project_id: str | None):
+def _scope_to_visible_tasks(query, current_user: User):
+    """Role-based task-set scoping (design doc §10): employee sees tasks
+    they're the assignee or creator of; manager additionally sees tasks
+    assigned to their direct reports; admin sees everything. Copies the
+    existing `GET /tasks` filter and the `notifications.py::reminder_candidates`
+    direct-reports-only precedent — no recursive manager-chain traversal."""
+    if current_user.role == UserRole.ADMIN:
+        return query
+    return query.filter(
+        or_(
+            Task.assignee_id == current_user.id,
+            Task.created_by_id == current_user.id,
+            Task.assignee.has(User.manager_id == current_user.id),
+        )
+    )
+
+
+def _completed_tasks(db: Session, project_id: str | None, current_user: User):
     query = db.query(Task).filter(Task.status == TaskStatus.COMPLETED, Task.completed_at.isnot(None))
     if project_id:
         query = query.filter(Task.project_id == project_id)
+    query = _scope_to_visible_tasks(query, current_user)
     return query.all()
 
 
@@ -28,7 +47,7 @@ def _completed_tasks(db: Session, project_id: str | None):
 def cycle_time(project_id: str | None = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Time from a task's first entry into In Progress to Completed."""
     points = []
-    for task in _completed_tasks(db, project_id):
+    for task in _completed_tasks(db, project_id, current_user):
         if not task.first_in_progress_at:
             continue
         seconds = (task.completed_at - task.first_in_progress_at).total_seconds()
@@ -55,7 +74,7 @@ def control_chart(project_id: str | None = None, db: Session = Depends(get_db), 
 def lead_time(project_id: str | None = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Time from task creation to Completed."""
     points = []
-    for task in _completed_tasks(db, project_id):
+    for task in _completed_tasks(db, project_id, current_user):
         seconds = (task.completed_at - task.created_at).total_seconds()
         points.append(
             LeadTimePoint(
@@ -78,7 +97,7 @@ def throughput(
 ):
     """Count of tasks completed per day or week."""
     buckets: dict[str, int] = defaultdict(int)
-    for task in _completed_tasks(db, project_id):
+    for task in _completed_tasks(db, project_id, current_user):
         completed = task.completed_at
         if interval == "week":
             period_start = (completed - timedelta(days=completed.weekday())).date()
@@ -103,6 +122,7 @@ def cumulative_flow(
     query = db.query(TaskStatusEvent).join(Task).order_by(TaskStatusEvent.occurred_at)
     if project_id:
         query = query.filter(Task.project_id == project_id)
+    query = _scope_to_visible_tasks(query, current_user)
     events = query.all()
 
     if not events:
