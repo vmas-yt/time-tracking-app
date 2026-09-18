@@ -150,7 +150,19 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String, nullable=False)
-    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.EMPLOYEE, nullable=False)
+    # RBAC Round B2: relaxed from NOT NULL. Deprecated, best-effort legacy
+    # mirror going forward -- kept in sync with `role_id` by application code
+    # for a user who holds a *builtin* role (see the note on `role_id`
+    # below), but has no valid value to hold for a user assigned a genuinely
+    # custom role (Round B3), so it becomes NULL for that user instead.
+    # `assert_admin` (services/authz.py) and the last-active-admin floor
+    # (services/users.py::is_last_active_admin/deactivate_user) keep reading
+    # *this* column directly forever, by design -- never `role_id`/`roles`/
+    # `role_permissions` -- see services/migrations.py's
+    # `_migrate_users_role_nullable` for the migration (including its
+    # rollback-plan writeup) that made this column nullable on an
+    # already-deployed database, on both backends.
+    role: Mapped[UserRole | None] = mapped_column(Enum(UserRole), default=UserRole.EMPLOYEE, nullable=True)
     # `manager_id` is the field `authz.py`/`reports.py`/`notifications.py` key
     # off of for review/reminder scoping. For a user with a `team_id`, this
     # becomes a derived, auto-synced cache of that team's `Team.manager_id`

@@ -63,6 +63,37 @@ def is_last_active_admin(db: Session, user: User) -> bool:
     return active_admins == 1
 
 
+def would_strip_last_active_admin(db: Session, user: User, new_role: UserRole | None) -> bool:
+    """True iff setting `user.role` to `new_role` would leave the system
+    with zero active admins.
+
+    The floor this guards is anchored to the legacy `role` enum column
+    forever, by design (see the note on `User.role` in models.py):
+    `assert_admin` (services/authz.py) checks `user.role == UserRole.ADMIN`
+    directly and never anything routed through `role_id`/`roles`/
+    `role_permissions`. So the only way to "lock everyone out" at that
+    floor is for the sole remaining row with `role == ADMIN` (and
+    `is_active`) to stop satisfying that condition — whether by
+    deactivation (already guarded by `is_last_active_admin`, used by
+    `deactivate_user` below) or by its `role` column changing to anything
+    else, including `None`.
+
+    `new_role` is `None` both for "the caller is explicitly setting `role`
+    to `NULL`" (newly representable now that Round B2's migration makes
+    `users.role` nullable — see `services/migrations.py::
+    _migrate_users_role_nullable`) and, incidentally, for "no role was
+    specified" if a caller passes `None` as a sentinel; either way, `None`
+    is not `UserRole.ADMIN`, so both cases are correctly treated as
+    "would strip admin" for whoever currently holds the floor. There is no
+    reachable path yet (Round B3's job) that assigns a *custom* role in
+    place of a builtin one, but this function is written to already be
+    correct for that case rather than needing revisiting then.
+    """
+    if new_role == UserRole.ADMIN:
+        return False
+    return is_last_active_admin(db, user)
+
+
 def deactivate_user(db: Session, user: User, actor: User) -> User:
     """Soft-delete a user (§6.4): 409 if this would remove the only active
     admin; otherwise flips `is_active`/`deactivated_at` and auto-pauses any

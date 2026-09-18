@@ -14,7 +14,12 @@ from app.schemas import (
 )
 from app.services.authz import assert_admin
 from app.services.teams import sync_team_manager, validate_team_id
-from app.services.users import deactivate_user, is_last_active_admin, validate_manager_id
+from app.services.users import (
+    deactivate_user,
+    is_last_active_admin,
+    validate_manager_id,
+    would_strip_last_active_admin,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -132,6 +137,21 @@ def update_user(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cannot deactivate the only remaining admin account.",
+        )
+
+    # Same "check before applying anything" rule as the deactivation guard
+    # above, and the same floor: the only row satisfying `assert_admin`'s
+    # `role == ADMIN` check can't be reassigned away from it (including to
+    # `None`, now representable at all since `users.role` became nullable —
+    # see services/migrations.py::_migrate_users_role_nullable) while it's
+    # the system's sole active admin. `"role" in updates` (not `.get(...)`)
+    # so an explicit `{"role": null}` is caught the same as any other value
+    # — a request that simply doesn't mention `role` at all must never hit
+    # this branch.
+    if "role" in updates and would_strip_last_active_admin(db, user, updates["role"]):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot change the role of the only remaining admin account.",
         )
 
     if "email" in updates and updates["email"] != user.email:

@@ -233,6 +233,112 @@ def test_can_deactivate_an_admin_when_another_active_admin_exists(client, auth_h
     assert resp.json()["is_active"] is False
 
 
+# ---- Last-active-admin floor: role reassignment (RBAC Round B2) -------------
+#
+# `users.role` became nullable in this round (see
+# app/services/migrations.py::_migrate_users_role_nullable) specifically so a
+# user holding a genuinely custom role (Round B3) has somewhere valid to
+# leave it. That also means `PATCH /users/{id}` with `{"role": ...}` (to any
+# non-admin value, including explicit `null`) is now something the DB layer
+# will actually accept for the sole admin unless the application guards it —
+# before this round, a `NOT NULL` constraint would have turned a `role: null`
+# attempt into a 500 rather than a silent, ungoverned 200. These tests prove
+# `would_strip_last_active_admin` (services/users.py) actually closes that
+# gap, the same way the existing tests above prove the deactivation guard
+# does for `is_active`.
+
+
+def test_cannot_change_role_of_the_only_remaining_admin(client, auth_headers):
+    me = client.get("/users/me", headers=auth_headers).json()
+    assert me["role"] == "admin"
+
+    resp = client.patch(f"/users/{me['id']}", json={"role": "employee"}, headers=auth_headers)
+    assert resp.status_code == 409
+    assert "only remaining admin" in resp.json()["detail"]
+
+    still_admin = client.get("/users/me", headers=auth_headers).json()
+    assert still_admin["role"] == "admin"
+
+
+def test_cannot_null_out_role_of_the_only_remaining_admin(client, auth_headers):
+    """The specific scenario this round's nullable-column migration makes
+    newly reachable: an explicit `{"role": null}` payload against the sole
+    admin must still be rejected, not silently accepted just because the DB
+    column can now hold NULL."""
+    me = client.get("/users/me", headers=auth_headers).json()
+
+    resp = client.patch(f"/users/{me['id']}", json={"role": None}, headers=auth_headers)
+    assert resp.status_code == 409
+    assert "only remaining admin" in resp.json()["detail"]
+
+    still_admin = client.get("/users/me", headers=auth_headers).json()
+    assert still_admin["role"] == "admin"
+
+
+def test_cannot_change_role_of_only_remaining_admin_even_targeting_another_admin(
+    client, auth_headers
+):
+    """Same guard, but the actor isn't the target -- proves this isn't
+    conflated with (or accidentally dependent on) the separate "can't act on
+    your own account" self-deactivation guard, which only ever fires for
+    is_active, never for role."""
+    # No second admin exists yet, so `auth_headers`'s admin is still the
+    # sole active admin; but a *different* admin session (created below)
+    # is the one making this request against a *third* target... instead,
+    # simplest reachable case: the sole admin's own account is the target,
+    # from a second admin's session -- still 409, still about the target's
+    # role, not the actor's.
+    second_admin = _create_user(client, auth_headers, "admin7@example.com", role="admin").json()
+    second_admin_headers = _login_headers(client, "admin7@example.com")
+
+    me = client.get("/users/me", headers=auth_headers).json()
+    assert me["role"] == "admin"
+
+    # Two active admins exist now, so the floor isn't at risk for either --
+    # demoting `me` from the second admin's session must succeed.
+    resp = client.patch(
+        f"/users/{me['id']}", json={"role": "employee"}, headers=second_admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "employee"
+
+    # Now only `second_admin` is an active admin -- demoting *them* must be
+    # rejected by the same guard, even though they're not acting on
+    # themselves (nothing here is the "own account" self-deactivation path).
+    resp = client.patch(
+        f"/users/{second_admin['id']}", json={"role": "manager"}, headers=second_admin_headers
+    )
+    assert resp.status_code == 409
+    assert "only remaining admin" in resp.json()["detail"]
+
+
+def test_can_change_role_of_admin_when_another_active_admin_exists(client, auth_headers):
+    second_admin = _create_user(client, auth_headers, "admin8@example.com", role="admin").json()
+    resp = client.patch(
+        f"/users/{second_admin['id']}", json={"role": "manager"}, headers=auth_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "manager"
+
+
+def test_role_change_guard_checked_before_other_fields_applied(client, auth_headers):
+    """Mirrors `test_admin_self_deactivate_combined_payload_does_not_apply_other_fields_first`:
+    a combined payload changing both `role` and an unrelated field must be
+    rejected wholesale, not partially applied."""
+    me = client.get("/users/me", headers=auth_headers).json()
+
+    resp = client.patch(
+        f"/users/{me['id']}",
+        json={"role": "employee", "full_name": "Renamed"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 409
+
+    unchanged = client.get("/users/me", headers=auth_headers).json()
+    assert unchanged["role"] == "admin"
+    assert unchanged["full_name"] != "Renamed"
+
+
 def test_deactivating_user_auto_pauses_running_timer(client, auth_headers):
     employee = _create_user(client, auth_headers, "runner@example.com").json()
     employee_headers = _login_headers(client, "runner@example.com")

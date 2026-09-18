@@ -43,6 +43,17 @@ Covers, in order:
      *is* a `WHERE role_id IS NULL` style migration -- see
      `_migrate_rbac_schema_backfill`'s own docstring for why that's correct
      here despite the superficial similarity to step 5.
+  7. RBAC Round B2 (schema half): relax `users.role` from `NOT NULL` to
+     nullable, so a user holding a genuinely custom role (Round B3) has
+     somewhere valid to leave the legacy column (NULL) once it no longer
+     matches any of the 3 fixed `UserRole` members. No data is changed by
+     this step -- every existing row's `role` value is left exactly as it
+     is; only the column's nullability constraint moves. Postgres: a
+     one-line `ALTER COLUMN ... DROP NOT NULL`. SQLite has no `ALTER
+     COLUMN` at all, so `_migrate_users_role_nullable` does the
+     create-copy-drop-rename table rebuild dance instead -- see that
+     function's own docstring for the rollback-plan writeup and why the two
+     backends are *not* symmetric on rollback.
 """
 
 import logging
@@ -404,6 +415,173 @@ def _migrate_rbac_schema_backfill(engine: Engine, inspector) -> None:
             )
 
 
+def _rebuild_sqlite_users_table_role_nullable(engine: Engine, inspector) -> None:
+    """SQLite has no `ALTER TABLE ... ALTER COLUMN`, so making one column
+    nullable means the standard rebuild dance: create a new table with the
+    desired shape, copy every row, drop the old table, rename the new one
+    into place — all inside one transaction, so a crash mid-way can't leave
+    the database in a headless in-between state (no `users` table at all,
+    or two of them).
+
+    The new table's column list, primary key, and foreign keys are all
+    derived from `inspector.get_columns("users")` /
+    `get_pk_constraint("users")` / `get_foreign_keys("users")` — i.e. from
+    whatever `users` *actually* looks like right now — rather than
+    hand-copied from `models.py`, specifically so this function doesn't need
+    updating (or silently drift out of sync) the next time a future round
+    adds a column to `User`. Only `role`'s nullability is overridden from
+    what's reflected; everything else is carried through verbatim.
+
+    Foreign keys pointing *at* `users.id` from other tables
+    (`teams.manager_id`, `tasks.assignee_id`/`created_by_id`,
+    `time_entries.user_id`, `task_comments.author_id`,
+    `task_audit_entries.actor_id`, `task_status_events.changed_by_id`, ...)
+    are unaffected by this rebuild: SQLite stores a FK constraint as literal
+    DDL text embedded in the *referencing* table's own `CREATE TABLE`
+    statement, not as a live pointer resolved against the referenced table's
+    identity — dropping and recreating `users` (same name, same row `id`
+    values, copied verbatim by the `INSERT INTO ... SELECT` below) never
+    touches those other tables' own DDL or rows at all. Confirmed
+    empirically, not assumed — see
+    `tests/test_migration_users_role_nullable_with_real_data.py`, which
+    builds exactly this cross-referencing shape (a team with a manager, a
+    task with an assignee and a creator, a time entry) on SQLite, runs this
+    rebuild, and asserts every one of those references still resolves to
+    the same row afterward. This is also consistent with `models.py`'s own
+    note on `Team.manager_id` — SQLite "never validates FK targets at
+    `CREATE TABLE`/DDL time regardless" — and with this project already
+    running with FK enforcement off everywhere (no `PRAGMA
+    foreign_keys=ON`).
+
+    Indexes are handled explicitly because they don't ride along with
+    `ALTER TABLE ... RENAME TO`'s row data the way columns/constraints
+    baked into `CREATE TABLE` do: SQLite drops a table's indexes when the
+    table itself is dropped, so every index reflected by
+    `inspector.get_indexes("users")` (already excludes the PK's own
+    implicit `sqlite_autoindex_*`, which is recreated automatically by the
+    `PRIMARY KEY` clause in the new `CREATE TABLE`) is recreated by name
+    after the rename, preserving uniqueness — e.g. `ix_users_email`.
+    """
+    table_name = "users"
+    tmp_name = "users__role_nullable_rebuild"
+
+    columns = inspector.get_columns(table_name)
+    pk = inspector.get_pk_constraint(table_name)
+    fks = inspector.get_foreign_keys(table_name)
+    indexes = inspector.get_indexes(table_name)
+
+    column_names = [col["name"] for col in columns]
+
+    col_defs = []
+    for col in columns:
+        name = col["name"]
+        type_str = col["type"].compile(dialect=engine.dialect)
+        nullable = True if name == "role" else col["nullable"]
+        clause = f'"{name}" {type_str}' + ("" if nullable else " NOT NULL")
+        col_defs.append(clause)
+
+    pk_cols = pk.get("constrained_columns") or []
+    if pk_cols:
+        col_defs.append("PRIMARY KEY (" + ", ".join(f'"{c}"' for c in pk_cols) + ")")
+
+    for fk in fks:
+        local_cols = ", ".join(f'"{c}"' for c in fk["constrained_columns"])
+        referred_cols = ", ".join(f'"{c}"' for c in fk["referred_columns"])
+        col_defs.append(
+            f'FOREIGN KEY({local_cols}) REFERENCES "{fk["referred_table"]}" ({referred_cols})'
+        )
+
+    create_sql = f'CREATE TABLE "{tmp_name}" (\n  ' + ",\n  ".join(col_defs) + "\n)"
+    quoted_cols = ", ".join(f'"{c}"' for c in column_names)
+
+    with engine.begin() as conn:
+        conn.execute(text(create_sql))
+        conn.execute(
+            text(
+                f'INSERT INTO "{tmp_name}" ({quoted_cols}) '
+                f'SELECT {quoted_cols} FROM "{table_name}"'
+            )
+        )
+        conn.execute(text(f'DROP TABLE "{table_name}"'))
+        conn.execute(text(f'ALTER TABLE "{tmp_name}" RENAME TO "{table_name}"'))
+
+        for idx in indexes:
+            idx_cols = ", ".join(f'"{c}"' for c in idx["column_names"])
+            unique_kw = "UNIQUE " if idx.get("unique") else ""
+            conn.execute(
+                text(f'CREATE {unique_kw}INDEX "{idx["name"]}" ON "{table_name}" ({idx_cols})')
+            )
+
+
+def _migrate_users_role_nullable(engine: Engine, inspector) -> None:
+    """RBAC Round B2 (schema half): make `users.role` nullable on an
+    already-deployed database. See the module docstring (step 7) for the
+    "why" (Round B3's custom roles have no valid `UserRole` member to hold
+    `role` at).
+
+    Idempotency guard, both backends: `inspector.get_columns("users")`'s
+    `role` entry's own `nullable` flag. If it's already `True`, this is a
+    pure no-op — safe to call on every startup indefinitely, the same
+    "inspect before acting" rule every other step in this module follows.
+    Purely a nullability change: no row's `role` *value* is touched by
+    either branch below, on either backend.
+
+    --- Rollback plan (written before shipping, not after) -----------------
+
+    If something is wrong with the new nullable-role/custom-role system
+    after this ships, reverting is **not symmetric** between backends:
+
+      * Postgres: `role` isn't dropped by this migration, so rolling the
+        *application* back to a version that only ever reads/writes
+        `user.role` directly (never `role_id`) works immediately, with no
+        further DB action required — `NULL` is just a value the (already
+        nullable) column can hold; a rolled-back app that never writes NULL
+        there again simply never produces one going forward. Re-tightening
+        the column back to `NOT NULL` is not required for this rollback to
+        work, and — see the SQLite case below — isn't safe to do blindly.
+
+      * SQLite: the column is already nullable post-migration (and, from
+        this round on, in `Base.metadata.create_all`'s own fresh-DB shape
+        too, since `models.py`'s `User.role` itself is now `nullable=True`).
+        Rebuilding it back to `NOT NULL` — the same create-copy-drop-rename
+        dance, run in reverse — would **fail outright** the moment any row
+        already has `role IS NULL`, because the copy step's `INSERT INTO
+        ... SELECT` would itself violate the rebuilt table's `NOT NULL`
+        constraint. Round B3 assigning a custom role to even a single user
+        is exactly what produces such a row. So: a schema-level rollback of
+        *this* migration is only mechanically possible before any custom
+        role has ever been assigned to anyone — once B3 is in real use,
+        reversing the nullability is a data-loss-shaped operation (every
+        custom-role user's `role` would first need to be invented or
+        nulled-out-then-backfilled some other way), not a mechanical schema
+        revert.
+
+      This asymmetry is a direct consequence of SQLite never having had a
+      real `ALTER COLUMN`. Operationally, the safe rollback story on either
+      backend is "stop assigning/using custom roles going forward" (an
+      application-level rollback), never "un-relax the nullability" (a
+      schema-level rollback) — this migration is a deliberate one-way door
+      at the schema level, even though it's a no-op / harmless in the
+      Postgres case specifically.
+    """
+    columns = {col["name"]: col for col in inspector.get_columns("users")}
+    role_col = columns.get("role")
+    if role_col is None or role_col["nullable"]:
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ALTER COLUMN role DROP NOT NULL"))
+        logger.info("Schema migration: relaxed users.role to nullable (Postgres DROP NOT NULL)")
+    elif engine.dialect.name == "sqlite":
+        _rebuild_sqlite_users_table_role_nullable(engine, inspector)
+        logger.info("Schema migration: relaxed users.role to nullable (SQLite table rebuild)")
+    else:  # pragma: no cover - project only ever targets these two dialects
+        raise NotImplementedError(
+            f"users.role nullable migration not implemented for dialect {engine.dialect.name!r}"
+        )
+
+
 def ensure_schema_migrations(engine: Engine) -> None:
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
@@ -429,3 +607,25 @@ def ensure_schema_migrations(engine: Engine) -> None:
 
     if {"roles", "role_permissions", "users"} <= table_names:
         _migrate_rbac_schema_backfill(engine, inspector)
+
+    if "users" in table_names:
+        # Unconditional re-inspect, *not* nested inside the `roles`/
+        # `role_permissions` block above: `_migrate_users_role_nullable`
+        # (specifically the SQLite rebuild path) derives its new table's
+        # entire column list from this inspector, so it must see every
+        # `ALTER TABLE users ADD COLUMN ...` issued by *any* earlier step in
+        # this function (`_migrate_users_table`'s `is_active`/
+        # `deactivated_at`, `_migrate_org_structure_backfill`'s `team_id`,
+        # `_migrate_rbac_schema_backfill`'s `role_id`) via a raw connection,
+        # none of which this cached `inspector` object picks up on its own.
+        # Nesting this re-inspect inside a conditional that can be skipped
+        # (e.g. a database that has `users` but not yet `roles`/
+        # `role_permissions`) was tried and caught by
+        # test_bootstrap_and_migrations.py::test_ensure_schema_migrations_adds_missing_columns
+        # during this round's own verification: it silently dropped
+        # `is_active`/`deactivated_at` from the rebuilt SQLite table because
+        # the stale inspector never reflected them — exactly the kind of
+        # thing this project's near-miss (see module docstring) exists to
+        # keep from shipping unverified again.
+        inspector = inspect(engine)
+        _migrate_users_role_nullable(engine, inspector)
