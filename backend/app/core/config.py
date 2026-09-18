@@ -8,6 +8,12 @@ class Settings(BaseSettings):
 
     app_name: str = "Time Tracking API"
     database_url: str = "sqlite:///./time_tracking.db"
+    # Optional Postgres schema (via `search_path`) the app's own engine
+    # should be scoped into. Used by the test suite (see
+    # backend/tests/conftest.py) to isolate the automated Postgres-mode run
+    # into its own schema, entirely separate from whatever's in `public`.
+    # No effect on SQLite.
+    db_schema: str | None = None
     secret_key: str = "change-me-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24
