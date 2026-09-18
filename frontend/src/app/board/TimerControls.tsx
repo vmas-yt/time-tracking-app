@@ -153,7 +153,10 @@ export function TimerControls({
           size={size}
           variant="primary"
           disabled={!check.ok || isPending}
-          onClick={() => onStart(task.id)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onStart(task.id);
+          }}
           className="shadow-none"
         >
           <PlayIcon /> Start
@@ -182,7 +185,15 @@ export function TimerControls({
       </span>
 
       {ownEntry.status === "running" ? (
-        <Button size={size} variant="secondary" disabled={isPending} onClick={() => onPause(ownEntry)}>
+        <Button
+          size={size}
+          variant="secondary"
+          disabled={isPending}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPause(ownEntry);
+          }}
+        >
           <PauseIcon /> Pause
         </Button>
       ) : (
@@ -194,7 +205,10 @@ export function TimerControls({
                 size={size}
                 variant="primary"
                 disabled={!check.ok || isPending}
-                onClick={() => onResume(ownEntry)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onResume(ownEntry);
+                }}
               >
                 <PlayIcon /> Resume
               </Button>
@@ -208,7 +222,10 @@ export function TimerControls({
         size={size}
         variant="danger"
         disabled={isPending}
-        onClick={() => requestStop(ownEntry)}
+        onClick={(e) => {
+          e.stopPropagation();
+          requestStop(ownEntry);
+        }}
         title={confirmingStop ? "Click again to confirm — this can't be undone" : "Stop is irreversible"}
         className={confirmingStop ? "animate-pulse" : undefined}
       >

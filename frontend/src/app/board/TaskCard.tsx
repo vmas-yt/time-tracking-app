@@ -55,14 +55,28 @@ export function TaskCard({ task, isDragging, onDragStart, onDragEnd }: TaskCardP
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       draggable={draggable}
+      onClick={() => board.selectTask(task.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          board.selectTask(task.id);
+        }
+      }}
       onDragStart={draggable ? (e) => onDragStart(e, task) : undefined}
       onDragEnd={onDragEnd}
       className={cn(
         "group space-y-2.5 rounded-xl bg-canvas p-3.5 transition-all duration-150 ease-out",
-        draggable ? "cursor-grab active:cursor-grabbing" : "cursor-default",
+        // The whole card opens task detail (Jira-style), so it's always a
+        // pointer target; draggable cards additionally show a grabbing
+        // cursor once a drag gesture actually starts (mouse held + moved) —
+        // the two affordances aren't mutually exclusive.
+        "cursor-pointer",
+        draggable && "active:cursor-grabbing",
         isDragging ? "scale-[0.97] opacity-40" : "hover:-translate-y-0.5 hover:bg-primary-pale/30",
-        "focus-within:ring-2 focus-within:ring-primary-neutral"
+        "focus-within:ring-2 focus-within:ring-primary-neutral focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-neutral"
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -81,13 +95,7 @@ export function TaskCard({ task, isDragging, onDragStart, onDragEnd }: TaskCardP
         )}
       </div>
 
-      <button
-        type="button"
-        onClick={() => board.selectTask(task.id)}
-        className="block text-left text-sm font-semibold leading-snug text-ink hover:underline"
-      >
-        {task.title}
-      </button>
+      <p className="text-sm font-semibold leading-snug text-ink">{task.title}</p>
 
       {task.description && <p className="line-clamp-2 text-xs leading-relaxed text-mute">{task.description}</p>}
 
