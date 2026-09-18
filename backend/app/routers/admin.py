@@ -11,7 +11,6 @@ from app.models import (
     DropdownOption,
     DropdownOptionScope,
     User,
-    UserRole,
 )
 from app.schemas import (
     BoardConfigRead,
@@ -23,7 +22,7 @@ from app.schemas import (
     DropdownOptionRead,
     DropdownOptionUpdate,
 )
-from app.services.authz import assert_admin
+from app.services.authz import assert_admin, role_key
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -212,7 +211,7 @@ def list_dropdown_options(
         DropdownOption.scope == scope_enum,
         DropdownOption.custom_field_id == resolved_field_id,
     )
-    if not (include_inactive and current_user.role == UserRole.ADMIN):
+    if not (include_inactive and role_key(current_user) == "admin"):
         query = query.filter(DropdownOption.is_active.is_(True))
     options = query.order_by(DropdownOption.position).all()
     return [_serialize_option(o) for o in options]

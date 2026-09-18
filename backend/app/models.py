@@ -176,23 +176,31 @@ class User(Base):
     # bootstrap-team backfill is careful never to overwrite a null set after
     # the fact.
     team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
-    # RBAC Round B1 (additive schema only): mirrors the legacy `role` enum
-    # onto a `roles` row via services/migrations.py::_migrate_rbac_schema_backfill.
-    # Nothing reads this column for any authorization decision yet -- every
-    # current check (assert_admin, validate_manager_id, reports.py,
-    # notifications.py, ...) keeps reading `role` exactly as before. That
-    # cutover, and this column becoming authoritative, is Round B2. No ORM
-    # relationship is declared here on purpose: `Role` is the natural name
-    # for one, but `role` is already taken by the legacy enum column above,
-    # and picking a throwaway name (e.g. `role_ref`) for a column nothing
-    # uses yet would just be one more thing for B2 to rename/reconsider --
-    # left for whichever round actually starts reading this FK to name.
+    # RBAC Round B1 (additive schema only) added this column, backfilled from
+    # the legacy `role` enum via services/migrations.py::
+    # _migrate_rbac_schema_backfill. Round B2 (authorization half) is the
+    # cutover: every non-floor authorization/visibility check now reads this
+    # column (via `services/authz.py::role_key`) instead of `role` directly.
+    # The floor itself (`assert_admin`, `can_view_task`, `can_edit_task` in
+    # services/authz.py; `is_last_active_admin`/`would_strip_last_active_admin`
+    # in services/users.py) is the deliberate, permanent exception -- see the
+    # note on `role` above. Kept in sync with `role` going forward by
+    # `create_user`/`update_user` (routers/users.py) whenever `role` is set,
+    # since no API-facing field lets a caller set `role_id` independently yet
+    # (that's Round B3's custom-role picker) -- see
+    # services/users.py::role_id_for_builtin_role.
     role_id: Mapped[str | None] = mapped_column(ForeignKey("roles.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     deactivated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     manager: Mapped["User | None"] = relationship(remote_side="User.id")
+    # RBAC Round B2 (authorization half): the relationship the `role_id`
+    # column's own docstring above left for this round to name, now that
+    # this round is the one actually reading it (`services/authz.py::
+    # role_key`). Named `assigned_role` rather than `role` since the legacy
+    # enum column already owns that name on this model.
+    assigned_role: Mapped["Role | None"] = relationship(foreign_keys=[role_id])
     team: Mapped["Team | None"] = relationship(back_populates="members", foreign_keys=[team_id])
     assigned_tasks: Mapped[list["Task"]] = relationship(
         back_populates="assignee", foreign_keys="Task.assignee_id"

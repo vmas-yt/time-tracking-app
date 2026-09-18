@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import AuditAction, Task, TaskStatus, TimeEntry, TimerStatus, User, UserRole
+from app.models import AuditAction, Task, TaskStatus, TimeEntry, TimerStatus, User
 from app.schemas import TimeEntryRead
-from app.services.authz import assert_can_edit_task
+from app.services.authz import assert_can_edit_task, role_key
 from app.services.tasks import record_audit, record_status_event
 from app.services.timer import (
     elapsed_seconds,
@@ -37,7 +37,7 @@ def _get_owned_entry(db: Session, entry_id: str, current_user: User) -> TimeEntr
     entry = db.get(TimeEntry, entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Time entry not found")
-    if current_user.role != UserRole.ADMIN and entry.user_id != current_user.id:
+    if role_key(current_user) != "admin" and entry.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Time entry not found")
     return entry
 
@@ -61,11 +61,11 @@ def list_time_entries(
         target = db.get(User, user_id)
         is_self = user_id == current_user.id
         is_their_manager = target is not None and target.manager_id == current_user.id
-        if not (is_self or is_their_manager or current_user.role == UserRole.ADMIN):
+        if not (is_self or is_their_manager or role_key(current_user) == "admin"):
             raise HTTPException(status_code=403, detail="Not authorized to view this user's time entries")
         query = db.query(TimeEntry).filter(TimeEntry.user_id == user_id)
     elif manager_id:
-        if not (manager_id == current_user.id or current_user.role == UserRole.ADMIN):
+        if not (manager_id == current_user.id or role_key(current_user) == "admin"):
             raise HTTPException(status_code=403, detail="Not authorized to view this team's time entries")
         query = db.query(TimeEntry).join(User, TimeEntry.user_id == User.id).filter(
             User.manager_id == manager_id

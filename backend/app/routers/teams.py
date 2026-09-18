@@ -4,9 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Team, User, UserRole
+from app.models import Team, User
 from app.schemas import TeamCreate, TeamRead, TeamUpdate
-from app.services.authz import assert_admin
+from app.services.authz import assert_admin, role_key
 from app.services.teams import sync_team_manager, validate_department_id, validate_team_manager_id
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -27,7 +27,7 @@ def list_teams(
     query = db.query(Team)
     if department_id:
         query = query.filter(Team.department_id == department_id)
-    if not (include_inactive and current_user.role == UserRole.ADMIN):
+    if not (include_inactive and role_key(current_user) == "admin"):
         query = query.filter(Team.is_active.is_(True))
     return query.all()
 

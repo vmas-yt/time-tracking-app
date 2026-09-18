@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.security import hash_password, verify_password
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Team, User, UserRole
+from app.models import Team, User
 from app.schemas import (
     PasswordChangeRequest,
     PasswordResetRequest,
@@ -12,11 +12,12 @@ from app.schemas import (
     UserRead,
     UserUpdate,
 )
-from app.services.authz import assert_admin
+from app.services.authz import assert_admin, role_key
 from app.services.teams import sync_team_manager, validate_team_id
 from app.services.users import (
     deactivate_user,
     is_last_active_admin,
+    role_id_for_builtin_role,
     validate_manager_id,
     would_strip_last_active_admin,
 )
@@ -39,7 +40,7 @@ def list_users(
     assignee/manager pickers. `include_inactive=true` is admin-only; a
     non-admin passing it has it silently ignored rather than erroring."""
     query = db.query(User)
-    if not (include_inactive and current_user.role == UserRole.ADMIN):
+    if not (include_inactive and role_key(current_user) == "admin"):
         query = query.filter(User.is_active.is_(True))
     return query.all()
 
@@ -61,6 +62,7 @@ def create_user(
         full_name=user_in.full_name,
         hashed_password=hash_password(user_in.password),
         role=user_in.role,
+        role_id=role_id_for_builtin_role(db, user_in.role),
         manager_id=user_in.manager_id,
         team_id=user_in.team_id,
         is_active=True,
@@ -165,6 +167,16 @@ def update_user(
 
     for field, value in updates.items():
         setattr(user, field, value)
+
+    if "role" in updates:
+        # RBAC Round B2's reachable sync direction (role -> role_id, see the
+        # note on User.role_id in models.py): `role` is currently the only
+        # API-facing field that ever changes which role a user holds, so
+        # this keeps `role_id` from going stale relative to it. An explicit
+        # `{"role": null}` (newly representable now that `role` is
+        # nullable) has no matching builtin row, so `role_id` follows it to
+        # null too, rather than being left pointing at a now-wrong role.
+        user.role_id = role_id_for_builtin_role(db, updates["role"]) if updates["role"] is not None else None
 
     if "team_id" in updates and updates["team_id"] is not None:
         # Same rationale as create_user: sync immediately whenever team_id

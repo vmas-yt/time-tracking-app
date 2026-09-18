@@ -54,6 +54,7 @@ from app.database import Base, get_db
 from app.main import app
 from app.models import User, UserRole
 from app.services.bootstrap import ensure_default_dropdown_options
+from app.services.migrations import ensure_schema_migrations
 
 
 def _maintenance_engine():
@@ -140,6 +141,23 @@ def db_engine(_postgres_reset, _postgres_schema):
         poolclass=StaticPool,
     )
     Base.metadata.create_all(bind=engine)
+    # RBAC Round B2: `Base.metadata.create_all` builds the `roles`/
+    # `role_permissions` tables (shape-only), but doesn't seed the 3 builtin
+    # `Role` rows -- that's `ensure_schema_migrations`'s job (specifically
+    # `_migrate_rbac_schema_backfill`), which only ever runs against the
+    # real `app.database.engine` via `main.py`'s lifespan, never against this
+    # fresh per-test in-memory engine (same gap `ensure_default_dropdown_options`
+    # is called explicitly for below in the `client` fixture, for the same
+    # reason). Without this, `role_id_for_builtin_role`/`role_key` would
+    # never see a real `roles` row for any user created through a test's
+    # `client`, and `services/authz.py::role_key`'s defensive fallback to
+    # the legacy `role` column would mask that gap rather than this round's
+    # role_id-based paths ever actually being exercised in SQLite-mode tests.
+    # Postgres mode doesn't need this: `db_engine` there *is* the real engine,
+    # and `TestClient(app)`'s own lifespan (via the `client` fixture) reruns
+    # `ensure_schema_migrations` fresh after every test's `_postgres_reset`
+    # truncation.
+    ensure_schema_migrations(engine)
     return engine
 
 

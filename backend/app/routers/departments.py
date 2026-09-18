@@ -4,9 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Department, Team, User, UserRole
+from app.models import Department, Team, User
 from app.schemas import DepartmentCreate, DepartmentRead, DepartmentUpdate
-from app.services.authz import assert_admin
+from app.services.authz import assert_admin, role_key
 
 router = APIRouter(prefix="/departments", tags=["departments"])
 
@@ -24,7 +24,7 @@ def list_departments(
     non-admin passing it has it silently ignored — same precedent as
     `GET /users?include_inactive`."""
     query = db.query(Department)
-    if not (include_inactive and current_user.role == UserRole.ADMIN):
+    if not (include_inactive and role_key(current_user) == "admin"):
         query = query.filter(Department.is_active.is_(True))
     return query.all()
 

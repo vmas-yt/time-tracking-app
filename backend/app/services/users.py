@@ -3,7 +3,8 @@ from datetime import datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models import AuditAction, TimeEntry, TimerStatus, User, UserRole
+from app.models import AuditAction, Role, TimeEntry, TimerStatus, User, UserRole
+from app.services.authz import role_key
 from app.services.tasks import record_audit
 from app.services.timer import pause_entry
 
@@ -33,7 +34,7 @@ def validate_manager_id(db: Session, manager_id: str | None, target_user_id: str
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A user cannot be their own manager",
         )
-    if manager.role == UserRole.EMPLOYEE:
+    if role_key(manager) == "employee":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="manager_id must reference a user with role 'manager' or 'admin'",
@@ -52,6 +53,25 @@ def validate_assignee_active(db: Session, assignee_id: str | None) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot assign a task to a deactivated user",
         )
+
+
+def role_id_for_builtin_role(db: Session, role: UserRole) -> str | None:
+    """The `roles.id` of the builtin `Role` row matching the legacy `role`
+    enum value -- RBAC Round B2's role -> role_id sync direction (see the
+    note on `User.role_id` in models.py). `role` is currently the only
+    API-facing field that ever changes which role a user holds
+    (`UserCreate`/`UserUpdate` don't accept `role_id` -- that's Round B3's
+    custom-role picker, sourced from `GET /roles`), so `routers/users.py`'s
+    `create_user`/`update_user` call this any time `role` is set, to keep
+    `role_id` from going stale relative to it.
+
+    Returns `None` if the builtin row is somehow missing (defensive only --
+    `services/migrations.py::_migrate_rbac_schema_backfill` always seeds all
+    three builtins on startup) so a caller degrades to leaving `role_id`
+    untouched rather than crashing user creation/update over a sync issue.
+    """
+    row = db.query(Role).filter(Role.key == role.value, Role.is_builtin.is_(True)).first()
+    return row.id if row else None
 
 
 def is_last_active_admin(db: Session, user: User) -> bool:

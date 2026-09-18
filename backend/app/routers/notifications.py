@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import TimeEntry, User, UserRole
+from app.models import TimeEntry, User
 from app.schemas import ReminderCandidate
+from app.services.authz import role_key
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -26,9 +27,9 @@ def reminder_candidates(
     actual delivery channel (email/Slack) is a follow-up that needs
     outbound-notification infrastructure this scaffold doesn't have.
     """
-    if current_user.role == UserRole.ADMIN:
+    if role_key(current_user) == "admin":
         scope = db.query(User)
-    elif current_user.role == UserRole.MANAGER:
+    elif role_key(current_user) == "manager":
         scope = db.query(User).filter(User.manager_id == current_user.id)
     else:
         scope = db.query(User).filter(User.id == current_user.id)

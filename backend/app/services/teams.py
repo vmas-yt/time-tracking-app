@@ -1,7 +1,8 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models import Department, Team, User, UserRole
+from app.models import Department, Team, User
+from app.services.authz import role_key
 
 
 def validate_department_id(db: Session, department_id: str | None) -> None:
@@ -61,7 +62,7 @@ def validate_team_manager_id(db: Session, manager_id: str | None) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot assign a deactivated user as a team manager",
         )
-    if manager.role == UserRole.EMPLOYEE:
+    if role_key(manager) == "employee":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="manager_id must reference a user with role 'manager' or 'admin'",

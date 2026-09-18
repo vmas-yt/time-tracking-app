@@ -16,7 +16,6 @@ from app.models import (
     TaskStatus,
     TimeEntry,
     User,
-    UserRole,
 )
 from app.schemas import (
     AuditEntryRead,
@@ -26,7 +25,7 @@ from app.schemas import (
     TaskRead,
     TaskUpdate,
 )
-from app.services.authz import assert_admin, assert_can_edit_task, assert_can_view_task
+from app.services.authz import assert_admin, assert_can_edit_task, assert_can_view_task, role_key
 from app.services.tasks import (
     apply_custom_values,
     change_status,
@@ -93,9 +92,9 @@ def list_tasks(
         query = query.filter(Task.status == status_filter)
     if manager_id:
         query = query.filter(Task.assignee.has(User.manager_id == manager_id))
-    if not (include_archived and current_user.role == UserRole.ADMIN):
+    if not (include_archived and role_key(current_user) == "admin"):
         query = query.filter(Task.archived_at.is_(None))
-    if current_user.role != UserRole.ADMIN:
+    if role_key(current_user) != "admin":
         query = query.filter(
             or_(
                 Task.assignee_id == current_user.id,
