@@ -10,6 +10,7 @@ import type {
   DropdownOption,
   DropdownOptionScope,
   LeadTimePoint,
+  ManualEntrySettings,
   Project,
   ReminderCandidate,
   SwimlaneField,
@@ -183,6 +184,26 @@ export const api = {
     assignee_id?: string | null;
     custom_values?: Record<string, string>;
   }) => request<Task>("/tasks", { method: "POST", body: JSON.stringify(input) }),
+  // Manual/retroactive time-logging: creates a task and its first logged
+  // time entry in one call, backdated to `start_date`/`completion_date`
+  // (bounded server-side by the admin's `max_days_back` policy — see
+  // `getManualEntrySettings` below). Same task fields as `createTask` plus
+  // the manual-log trio.
+  createManualTask: (input: {
+    title: string;
+    project_id?: string | null;
+    description?: string;
+    task_type?: TaskType;
+    category: TaskCategory;
+    category_other_text?: string;
+    priority?: TaskPriority;
+    assignee_id?: string | null;
+    team_id?: string | null;
+    custom_values?: Record<string, string>;
+    start_date: string;
+    completion_date: string;
+    duration_minutes: number;
+  }) => request<Task>("/tasks/manual-log", { method: "POST", body: JSON.stringify(input) }),
   getTask: (taskId: string) => request<Task>(`/tasks/${taskId}`),
   updateTask: (
     taskId: string,
@@ -223,12 +244,29 @@ export const api = {
     request<TimeEntry>(`/time-entries/${entryId}/resume`, { method: "POST" }),
   stopTimer: (entryId: string) =>
     request<TimeEntry>(`/time-entries/${entryId}/stop`, { method: "POST" }),
+  // Adds a backdated time entry to an existing task (as opposed to
+  // `createManualTask`, which creates the task too) — same `max_days_back`
+  // bound applies server-side.
+  logManualTimeForTask: (
+    taskId: string,
+    payload: { start_date: string; completion_date: string; duration_minutes: number }
+  ) => request<Task>(`/tasks/${taskId}/manual-log`, { method: "POST", body: JSON.stringify(payload) }),
 
   getBoardConfig: () => request<BoardConfig>("/admin/board-config"),
   updateBoardConfig: (swimlane_field: SwimlaneField) =>
     request<BoardConfig>("/admin/board-config", {
       method: "PATCH",
       body: JSON.stringify({ swimlane_field }),
+    }),
+  // Manual/retroactive time-logging policy — how many days back a manual
+  // entry's start/completion date may be backdated. Readable by any
+  // authenticated user (the manual-log form needs it to bound its date
+  // pickers); only admins can PATCH it. `0` is a valid value ("only today").
+  getManualEntrySettings: () => request<ManualEntrySettings>("/admin/manual-entry-settings"),
+  updateManualEntrySettings: (maxDaysBack: number) =>
+    request<ManualEntrySettings>("/admin/manual-entry-settings", {
+      method: "PATCH",
+      body: JSON.stringify({ max_days_back: maxDaysBack }),
     }),
   listCustomFields: () => request<CustomField[]>("/admin/custom-fields"),
   createCustomField: (input: { name: string; field_type: CustomFieldType; options?: string[] }) =>

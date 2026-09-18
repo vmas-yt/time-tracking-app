@@ -84,6 +84,16 @@ export interface Task {
   archived_at: string | null;
   custom_values: Record<string, string>;
   total_logged_seconds: number;
+  // Manual/retroactive time-logging (docs/PRD.md-adjacent design work):
+  // `started_at` is when the task's timer/manual entry actually began (as
+  // opposed to `created_at`, which is when the task row was created);
+  // `is_manual_entry` flags a task created or logged via the manual-entry
+  // flow rather than the live Start/Pause/Stop timer; `card_date` is the
+  // backend-computed date the board should display on the card (manual
+  // entries show their logged date rather than `created_at`).
+  started_at: string | null;
+  is_manual_entry: boolean;
+  card_date: string;
 }
 
 export interface TimeEntry {
@@ -96,6 +106,18 @@ export interface TimeEntry {
   accumulated_seconds: number;
   ended_at: string | null;
   elapsed_seconds: number;
+  // True when this entry was created via the manual-log endpoints rather
+  // than the live Start/Pause/Stop timer flow.
+  is_manual: boolean;
+}
+
+// Admin-configurable policy for the manual/retroactive time-logging
+// feature: how many days back a manual entry's start/completion date may
+// be backdated. `0` is a valid, meaningful value ("only today, no
+// backdating") — not an unset/error state.
+export interface ManualEntrySettings {
+  max_days_back: number;
+  updated_at: string;
 }
 
 export interface Comment {
