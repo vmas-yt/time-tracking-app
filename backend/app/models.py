@@ -92,6 +92,57 @@ class DropdownOptionScope(str, enum.Enum):
     CUSTOM_FIELD = "custom_field"
 
 
+class Role(Base):
+    """RBAC Round B1 (additive schema only). Exactly 3 rows are seeded as
+    builtins by services/migrations.py::_migrate_rbac_schema_backfill --
+    `key` in ("employee", "manager", "admin"), matching the legacy `UserRole`
+    enum values. Custom (non-builtin) roles are a later round's (B3) job;
+    this table's shape already accommodates them (`is_builtin=False`) but
+    nothing creates one yet.
+
+    Admin's permissions are implicit/all-permissions-always in application
+    code by design, not stored `role_permissions` rows -- see that table's
+    docstring.
+    """
+
+    __tablename__ = "roles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    key: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    permissions: Mapped[list["RolePermission"]] = relationship(
+        back_populates="role", cascade="all, delete-orphan"
+    )
+
+
+class RolePermission(Base):
+    """One granted permission for a role. `permission_key` is validated
+    against an in-code permission enum at the application layer in a later
+    round (B3) -- deliberately not a DB-level catalog/FK table here, just a
+    plain string column, per solution-architect's design for this round.
+
+    Admin is never represented here: its permissions are "all permissions,
+    always" in application code, not enumerated rows -- an Admin role with
+    zero `role_permissions` rows is correct and expected, not a bug.
+    """
+
+    __tablename__ = "role_permissions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    role_id: Mapped[str] = mapped_column(ForeignKey("roles.id"), nullable=False)
+    permission_key: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("uq_role_permission_role_key", "role_id", "permission_key", unique=True),
+    )
+
+    role: Mapped["Role"] = relationship(back_populates="permissions")
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -113,6 +164,18 @@ class User(Base):
     # bootstrap-team backfill is careful never to overwrite a null set after
     # the fact.
     team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
+    # RBAC Round B1 (additive schema only): mirrors the legacy `role` enum
+    # onto a `roles` row via services/migrations.py::_migrate_rbac_schema_backfill.
+    # Nothing reads this column for any authorization decision yet -- every
+    # current check (assert_admin, validate_manager_id, reports.py,
+    # notifications.py, ...) keeps reading `role` exactly as before. That
+    # cutover, and this column becoming authoritative, is Round B2. No ORM
+    # relationship is declared here on purpose: `Role` is the natural name
+    # for one, but `role` is already taken by the legacy enum column above,
+    # and picking a throwaway name (e.g. `role_ref`) for a column nothing
+    # uses yet would just be one more thing for B2 to rename/reconsider --
+    # left for whichever round actually starts reading this FK to name.
+    role_id: Mapped[str | None] = mapped_column(ForeignKey("roles.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     deactivated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

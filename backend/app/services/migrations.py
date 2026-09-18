@@ -37,6 +37,12 @@ Covers, in order:
      `users.team_id` / `tasks.team_id` backfill onto it for pre-existing rows
      (see `_migrate_org_structure_backfill`'s own docstring for why this is
      *not* a `WHERE team_id IS NULL` style migration).
+  6. RBAC Round B1 (additive schema only, zero behavior change): seed the 3
+     builtin `roles` rows, add `users.role_id`, and backfill it from the
+     legacy `users.role` enum column. Unlike step 5's `team_id`, this one
+     *is* a `WHERE role_id IS NULL` style migration -- see
+     `_migrate_rbac_schema_backfill`'s own docstring for why that's correct
+     here despite the superficial similarity to step 5.
 """
 
 import logging
@@ -281,6 +287,123 @@ def _migrate_org_structure_backfill(engine: Engine, inspector) -> None:
         )
 
 
+def _migrate_rbac_schema_backfill(engine: Engine, inspector) -> None:
+    """RBAC Round B1 (additive schema only): `roles` / `role_permissions`
+    are brand-new tables, already created by `Base.metadata.create_all`
+    (called before this function, same precondition as
+    `_migrate_org_structure_backfill` relies on for `departments`/`teams`).
+    This function's job:
+
+      1. Seed exactly 3 builtin `Role` rows (key: "employee"/"manager"/
+         "admin"), idempotent via a per-key `SELECT ... WHERE key = ...`
+         existence check -- safe to re-run every startup since inserting a
+         row is naturally idempotent-by-key, same reasoning
+         `_migrate_org_structure_backfill` already applies to the "General"
+         department/team.
+      2. Add `users.role_id` to a database that predates it, via the same
+         "ALTER TABLE ADD COLUMN if not in `inspector.get_columns`" pattern
+         already used for `users.team_id`.
+      3. Backfill `users.role_id` from the legacy `users.role` enum column.
+
+    Comparison verified empirically against real Postgres 16 (not reasoned
+    from first principles -- this project has a documented near-miss for
+    exactly that shortcut, see module docstring): a user inserted with
+    `role=UserRole.EMPLOYEE` stores the raw value `'EMPLOYEE'` in the
+    `users.role` column (the enum member's `.name`, not its lowercase
+    `.value` -- the same convention already relied on for
+    `tasks.category`/`tasks.priority` before their own migration, and for
+    `TimeEntry.status` in `TimeEntry.__table_args__`). Confirmed on both
+    backends: SQLite stores the same uppercase string (no real native enum
+    type there either); on Postgres, comparing the native `userrole` enum
+    column against a *mismatched-case* bind parameter (e.g. `'employee'`)
+    doesn't silently fail to match -- it raises
+    `InvalidTextRepresentation` immediately, because Postgres attempts an
+    implicit cast of the literal to the enum type before comparing. That
+    fail-loud behavior is exactly why the three `UPDATE ... WHERE role =
+    :enum_name` statements below use the literal uppercase member names
+    ('EMPLOYEE'/'MANAGER'/'ADMIN') rather than `key.upper()` string-munging
+    or a `::text` cast -- if a future enum member's name and key ever
+    diverged, this would error loudly on that backend instead of silently
+    mismatching everyone onto no role.
+
+    Unlike step 5's `users.team_id` (see `_migrate_org_structure_backfill`'s
+    docstring), this backfill is deliberately kept **data-state gated**
+    (`WHERE role_id IS NULL`) rather than schema-state gated, and re-runs on
+    every startup indefinitely -- the opposite choice, made deliberately,
+    not a copy-paste of that shape:
+
+      - `team_id = NULL` is a legitimate, permanent, *admin-chosen* state
+        (an intentionally unplaced hire) that a data-gated re-fire would
+        silently stomp back onto "General" -- that's what made a
+        data-state gate wrong there.
+      - `role_id = NULL` has no such standing meaning in this round. Every
+        user always has exactly one non-null `role`; nothing in this round
+        (or before it) ever writes `role_id` at all -- that's B2's job, out
+        of scope here. So *every* row with `role_id IS NULL` at any point
+        during B1's bake period is purely an artifact of timing (created
+        before this migration ran, or created via the still-unmodified
+        legacy user-creation path sometime after), never an intentional
+        choice. Leaving such rows permanently unbackfilled (mirroring
+        step 5's shape) would let stragglers created between this deploy
+        and B2's cutover silently reach B2 with a null `role_id`, which is
+        exactly the kind of gap this round exists to close before the
+        higher-risk cutover lands. Re-checking `WHERE role_id IS NULL` on
+        every startup costs three cheap indexed-by-nothing UPDATEs against
+        rows that already all have `role_id` set (a no-op scan) once the
+        database is caught up, and self-heals any straggler in the
+        meantime -- see
+        test_migration_rbac_schema_with_real_data.py for the regression
+        test proving both the idempotency and the self-healing behavior.
+    """
+    builtin_roles = (
+        ("employee", "Employee", "EMPLOYEE"),
+        ("manager", "Manager", "MANAGER"),
+        ("admin", "Admin", "ADMIN"),
+    )
+
+    role_ids: dict[str, str] = {}
+    with engine.begin() as conn:
+        for key, name, _enum_name in builtin_roles:
+            existing_role = conn.execute(
+                text("SELECT id FROM roles WHERE key = :key"), {"key": key}
+            ).fetchone()
+            if existing_role is None:
+                new_role_id = str(uuid.uuid4())
+                conn.execute(
+                    text(
+                        "INSERT INTO roles (id, key, name, is_builtin, created_at) "
+                        "VALUES (:id, :key, :name, :is_builtin, :created_at)"
+                    ),
+                    {
+                        "id": new_role_id,
+                        "key": key,
+                        "name": name,
+                        "is_builtin": True,
+                        "created_at": datetime.utcnow(),
+                    },
+                )
+                role_ids[key] = new_role_id
+                logger.info("Schema migration: seeded builtin role %r", key)
+            else:
+                role_ids[key] = existing_role[0]
+
+    users_columns = {col["name"] for col in inspector.get_columns("users")}
+    if "role_id" not in users_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN role_id VARCHAR NULL REFERENCES roles(id)"))
+        logger.info("Schema migration: added users.role_id")
+
+    with engine.begin() as conn:
+        for key, _name, enum_name in builtin_roles:
+            conn.execute(
+                text(
+                    "UPDATE users SET role_id = :role_id "
+                    "WHERE role_id IS NULL AND role = :enum_name"
+                ),
+                {"role_id": role_ids[key], "enum_name": enum_name},
+            )
+
+
 def ensure_schema_migrations(engine: Engine) -> None:
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
@@ -303,3 +426,6 @@ def ensure_schema_migrations(engine: Engine) -> None:
 
     if {"departments", "teams", "users", "tasks"} <= table_names:
         _migrate_org_structure_backfill(engine, inspector)
+
+    if {"roles", "role_permissions", "users"} <= table_names:
+        _migrate_rbac_schema_backfill(engine, inspector)
