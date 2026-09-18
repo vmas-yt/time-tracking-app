@@ -18,38 +18,61 @@ import { DropdownOptionsTable } from "../shared/DropdownOptionsTable";
  * from this UI before, so this preserves that behavior rather than adding
  * new capability).
  *
- * "Manage" mode (opened from the field's row in the table) shows name/type
- * read-only — the backend has no update endpoint for either, only
- * create/delete, so there's nothing to save there — and, for `select`-type
- * fields, embeds the same `DropdownOptionsTable` used by Categories/
- * Priorities so option management also lives behind this one slide-over
- * pattern instead of the old inline-expand row. */
+ * "Manage" mode (opened from the field's row in the table) now supports
+ * renaming via `PATCH /admin/custom-fields/{id}` (name-only — an inline
+ * Save button next to the name field, enabled only once the draft differs
+ * from the saved name). Type stays a disabled `<Input>` — the backend
+ * deliberately never accepts `field_type` on update, since changing a
+ * field's data type after real values exist is out of scope — and, for
+ * `select`-type fields, this panel still embeds the same
+ * `DropdownOptionsTable` used by Categories/Priorities so option management
+ * lives behind this one slide-over pattern instead of the old inline-expand
+ * row. */
 export function CustomFieldFormPanel({
   open,
   mode,
   field,
   onClose,
-  onCreated,
+  onSaved,
 }: {
   open: boolean;
   mode: "create" | "manage";
   field: CustomField | null;
   onClose: () => void;
-  onCreated: (field: CustomField) => void;
+  onSaved: (field: CustomField, opts: { created: boolean }) => void;
 }) {
   const [name, setName] = useState("");
   const [fieldType, setFieldType] = useState<CustomFieldType>("text");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // "Manage" mode's own draft for the rename flow — kept separate from
+  // `name` above (which create mode owns) so switching panels never bleeds
+  // state between the two forms.
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [nameSaved, setNameSaved] = useState(false);
+
   useEffect(() => {
     if (!open) return;
     if (mode === "create") {
       setName("");
       setFieldType("text");
+      setError(null);
+    } else if (field) {
+      setNameDraft(field.name);
+      setNameError(null);
+      setNameSaved(false);
     }
-    setError(null);
-  }, [open, mode]);
+    // Keyed on `field?.id`, not `field` itself: a successful rename replaces
+    // `field` with a new object (same id) so the slide-over header picks up
+    // the new name, but re-running this reset on that same swap would wipe
+    // `nameSaved` back to false before the "Saved." confirmation ever
+    // rendered. Only a real switch — opening the panel, or managing a
+    // different field — should reset the draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mode, field?.id]);
 
   if (!open) return null;
 
@@ -60,11 +83,31 @@ export function CustomFieldFormPanel({
     setError(null);
     try {
       const created = await api.createCustomField({ name: name.trim(), field_type: fieldType });
-      onCreated(created);
+      onSaved(created, { created: true });
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const trimmedDraft = nameDraft.trim();
+  const canSaveName = field != null && trimmedDraft.length > 0 && trimmedDraft !== field.name;
+
+  const handleSaveName = async () => {
+    if (!field || !canSaveName) return;
+    setSavingName(true);
+    setNameError(null);
+    setNameSaved(false);
+    try {
+      const updated = await api.updateCustomField(field.id, { name: trimmedDraft });
+      onSaved(updated, { created: false });
+      setNameDraft(updated.name);
+      setNameSaved(true);
+    } catch (err) {
+      setNameError(errorMessage(err));
+    } finally {
+      setSavingName(false);
     }
   };
 
@@ -118,16 +161,42 @@ export function CustomFieldFormPanel({
           </form>
         ) : field ? (
           <div className="space-y-4">
-            <label className="space-y-1.5 text-sm">
+            <div className="space-y-1.5 text-sm">
               <span className="font-semibold text-ink">Field name</span>
-              <Input value={field.name} disabled />
-            </label>
+              <div className="flex gap-2">
+                <Input
+                  value={nameDraft}
+                  onChange={(e) => {
+                    setNameDraft(e.target.value);
+                    setNameSaved(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleSaveName();
+                    }
+                  }}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleSaveName}
+                  disabled={!canSaveName || savingName}
+                >
+                  {savingName ? "Saving…" : "Save"}
+                </Button>
+              </div>
+              {nameError && <p className="text-xs text-negative">{nameError}</p>}
+              {nameSaved && !nameError && <p className="text-xs text-positive">Saved.</p>}
+            </div>
             <label className="space-y-1.5 text-sm">
               <span className="font-semibold text-ink">Type</span>
               <Input value={field.field_type} disabled />
             </label>
             <p className="text-xs text-mute">
-              Name and type can&rsquo;t be changed after creation — remove and re-create the field instead.
+              Type can&rsquo;t be changed after creation — remove and re-create the field instead.
             </p>
 
             {field.field_type === "select" && (

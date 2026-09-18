@@ -108,6 +108,8 @@ export const api = {
   getProject: (projectId: string) => request<Project>(`/projects/${projectId}`),
   createProject: (name: string, description?: string) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify({ name, description }) }),
+  updateProject: (projectId: string, input: Partial<{ name: string; description: string }>) =>
+    request<Project>(`/projects/${projectId}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteProject: (projectId: string) => request<void>(`/projects/${projectId}`, { method: "DELETE" }),
 
   listTasks: (params?: {
@@ -187,6 +189,8 @@ export const api = {
   listCustomFields: () => request<CustomField[]>("/admin/custom-fields"),
   createCustomField: (input: { name: string; field_type: CustomFieldType; options?: string[] }) =>
     request<CustomField>("/admin/custom-fields", { method: "POST", body: JSON.stringify(input) }),
+  updateCustomField: (fieldId: string, input: { name: string }) =>
+    request<CustomField>(`/admin/custom-fields/${fieldId}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteCustomField: (fieldId: string) =>
     request<void>(`/admin/custom-fields/${fieldId}`, { method: "DELETE" }),
 

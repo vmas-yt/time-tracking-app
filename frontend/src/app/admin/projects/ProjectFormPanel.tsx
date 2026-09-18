@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
@@ -9,32 +9,43 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { SlideOver, SlideOverHeader } from "@/components/ui/SlideOver";
 
-/** Create slide-over for a project — replaces the old inline form at the top
- * of the Projects card. There's no project-edit endpoint on the backend
- * today (only create + delete), so this panel is create-only, matching what
- * the previous inline UI actually supported. */
+/** Create/edit slide-over for a project — mirrors `UserFormPanel`'s
+ * `mode: "create" | "edit"` shape. Edit now that `PATCH /projects/{id}`
+ * exists (name/description, partial update); create still posts name +
+ * description exactly as before. */
 export function ProjectFormPanel({
   open,
+  mode,
+  project,
   onClose,
-  onCreated,
+  onSaved,
 }: {
   open: boolean;
+  mode: "create" | "edit";
+  project: Project | null;
   onClose: () => void;
-  onCreated: (project: Project) => void;
+  onSaved: (project: Project, opts: { created: boolean }) => void;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const reset = () => {
-    setName("");
-    setDescription("");
+  useEffect(() => {
+    if (!open) return;
+    if (mode === "edit" && project) {
+      setName(project.name);
+      setDescription(project.description ?? "");
+    } else {
+      setName("");
+      setDescription("");
+    }
     setError(null);
-  };
+  }, [open, mode, project]);
+
+  if (!open) return null;
 
   const handleClose = () => {
-    reset();
     onClose();
   };
 
@@ -44,9 +55,16 @@ export function ProjectFormPanel({
     setSubmitting(true);
     setError(null);
     try {
-      const created = await api.createProject(name.trim(), description.trim() || undefined);
-      onCreated(created);
-      reset();
+      if (mode === "create") {
+        const created = await api.createProject(name.trim(), description.trim() || undefined);
+        onSaved(created, { created: true });
+      } else if (project) {
+        const updated = await api.updateProject(project.id, {
+          name: name.trim(),
+          description: description.trim(),
+        });
+        onSaved(updated, { created: false });
+      }
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -58,10 +76,13 @@ export function ProjectFormPanel({
     <SlideOver open={open} onClose={handleClose} widthClassName="max-w-[440px]">
       <SlideOverHeader onClose={handleClose}>
         <div>
-          <h2 className="text-lg font-bold tracking-tight text-ink">Add project</h2>
+          <h2 className="text-lg font-bold tracking-tight text-ink">
+            {mode === "create" ? "Add project" : "Edit project"}
+          </h2>
           <p className="mt-1 text-xs text-mute">
-            Optional grouping for tasks — most work happens directly on the board without a project. Employees pick
-            from this list on the Add/Edit Task panel.
+            {mode === "create"
+              ? "Optional grouping for tasks — most work happens directly on the board without a project. Employees pick from this list on the Add/Edit Task panel."
+              : `Editing ${project?.name ?? "project"}.`}
           </p>
         </div>
       </SlideOverHeader>
@@ -77,7 +98,7 @@ export function ProjectFormPanel({
         </label>
         <div className="mt-auto flex gap-2 border-t border-canvas pt-4">
           <Button variant="primary" type="submit" disabled={!name.trim() || submitting} className="flex-1">
-            {submitting ? "Creating…" : "Create project"}
+            {submitting ? "Saving…" : mode === "create" ? "Create project" : "Save changes"}
           </Button>
           <Button variant="tertiary" type="button" onClick={handleClose} disabled={submitting}>
             Cancel

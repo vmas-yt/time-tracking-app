@@ -142,9 +142,10 @@ export default function CustomFieldsPage() {
         mode={panelMode}
         field={activeField}
         onClose={() => setPanelOpen(false)}
-        onCreated={(created) => {
-          setFields((prev) => [...prev, created]);
-          setPanelOpen(false);
+        onSaved={(saved, { created }) => {
+          setFields((prev) => (created ? [...prev, saved] : prev.map((f) => (f.id === saved.id ? saved : f))));
+          setActiveField(saved);
+          if (created) setPanelOpen(false);
         }}
       />
 

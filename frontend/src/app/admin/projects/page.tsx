@@ -18,6 +18,8 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState<"create" | "edit">("create");
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -60,7 +62,15 @@ export default function ProjectsPage() {
             Optional groupings for tasks — most work happens directly on the board without a project.
           </p>
         </div>
-        <Button size="sm" variant="primary" onClick={() => setFormOpen(true)}>
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => {
+            setFormMode("create");
+            setActiveProject(null);
+            setFormOpen(true);
+          }}
+        >
           + Add project
         </Button>
       </CardHeader>
@@ -94,14 +104,27 @@ export default function ProjectsPage() {
                     <td className="py-2 font-medium text-ink">{p.name}</td>
                     <td className="py-2 text-body">{p.description || "—"}</td>
                     <td className="py-2">
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={() => setConfirmingId(p.id)}
-                        disabled={busyId === p.id}
-                      >
-                        Remove
-                      </Button>
+                      <div className="flex flex-wrap gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setFormMode("edit");
+                            setActiveProject(p);
+                            setFormOpen(true);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => setConfirmingId(p.id)}
+                          disabled={busyId === p.id}
+                        >
+                          Remove
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -113,9 +136,11 @@ export default function ProjectsPage() {
 
       <ProjectFormPanel
         open={formOpen}
+        mode={formMode}
+        project={activeProject}
         onClose={() => setFormOpen(false)}
-        onCreated={(created) => {
-          setProjects((prev) => [...prev, created]);
+        onSaved={(saved, { created }) => {
+          setProjects((prev) => (created ? [...prev, saved] : prev.map((p) => (p.id === saved.id ? saved : p))));
           setFormOpen(false);
         }}
       />
