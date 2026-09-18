@@ -5,7 +5,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.database import Base, SessionLocal, engine
-from app.routers import admin, auth, notifications, projects, reports, tasks, time_entries, users
+from app.routers import (
+    admin,
+    auth,
+    departments,
+    notifications,
+    projects,
+    reports,
+    tasks,
+    teams,
+    time_entries,
+    users,
+)
 from app.services.bootstrap import ensure_bootstrap_admin, ensure_default_dropdown_options
 from app.services.migrations import ensure_schema_migrations
 
@@ -37,6 +48,8 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(departments.router)
+app.include_router(teams.router)
 app.include_router(projects.router)
 app.include_router(tasks.router)
 app.include_router(time_entries.router)

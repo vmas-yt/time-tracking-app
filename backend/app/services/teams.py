@@ -1,7 +1,43 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models import Team, User, UserRole
+from app.models import Department, Team, User, UserRole
+
+
+def validate_department_id(db: Session, department_id: str | None) -> None:
+    """400 if a non-null department_id doesn't reference an existing
+    Department, mirroring `services/tasks.py::validate_project_exists`'s
+    style. No active check here — reassigning a team's department is an
+    admin action independent of whether that department is currently
+    accepting new teams."""
+    if not department_id:
+        return
+    department = db.get(Department, department_id)
+    if not department:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="department_id does not reference an existing department",
+        )
+
+
+def validate_team_id(db: Session, team_id: str | None) -> None:
+    """400 if a non-null team_id doesn't reference an existing, *active*
+    Team — used wherever a user or task's team_id is set directly by a
+    caller (routers/users.py, routers/tasks.py). Mirrors
+    `services/users.py::validate_assignee_active`'s "must be active" style."""
+    if not team_id:
+        return
+    team = db.get(Team, team_id)
+    if not team:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="team_id does not reference an existing team",
+        )
+    if not team.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot assign to an inactive team",
+        )
 
 
 def validate_team_manager_id(db: Session, manager_id: str | None) -> None:
@@ -56,11 +92,15 @@ def sync_team_manager(db: Session, team: Team) -> None:
     convention of mutating within the caller's existing session and letting
     the router commit once, after every related change for the request).
 
-    Not yet called from anywhere in this round (Round A) — the team CRUD
-    surface that would call it (creating/editing a team, or moving a user
-    between teams) is `routers/teams.py`, added in a later round. Wiring
-    this in is that round's job; this function is the schema-adjacent piece
-    that belongs to db-admin.
+    Wired in from two call sites (Round B): `routers/teams.py::create_team`/
+    `update_team` (after `team.manager_id` changes) and
+    `routers/users.py::create_user`/`update_user` (after a user's `team_id`
+    is set/changed to a non-null value). Callers must `db.flush()` first if
+    the change this call is meant to pick up (the team's own `manager_id`,
+    or a user's just-set `team_id`) hasn't been flushed yet — this issues a
+    raw bulk `UPDATE` against the `users` table, not the ORM's in-memory
+    state, so it only sees what's already been flushed within the
+    transaction.
     """
     db.query(User).filter(User.team_id == team.id).update(
         {User.manager_id: team.manager_id}, synchronize_session=False

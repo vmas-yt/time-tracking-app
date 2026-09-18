@@ -47,6 +47,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     role: UserRole = UserRole.EMPLOYEE
     manager_id: str | None = None
+    team_id: str | None = None
     password: str = Field(min_length=8)
 
 
@@ -54,6 +55,7 @@ class UserRead(UserBase, UTCModel):
     id: str
     role: UserRole
     manager_id: str | None
+    team_id: str | None = None
     is_active: bool
     deactivated_at: UTCDatetime | None = None
     created_at: UTCDatetime
@@ -64,6 +66,7 @@ class UserUpdate(BaseModel):
     email: EmailStr | None = None
     role: UserRole | None = None
     manager_id: str | None = None
+    team_id: str | None = None
     is_active: bool | None = None
 
 
@@ -79,6 +82,48 @@ class PasswordChangeRequest(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+# ---- Departments & Teams ----------------------------------------------------
+
+
+class DepartmentCreate(BaseModel):
+    name: str
+
+
+class DepartmentUpdate(BaseModel):
+    name: str | None = None
+    is_active: bool | None = None
+
+
+class DepartmentRead(UTCModel):
+    id: str
+    name: str
+    is_active: bool
+    created_at: UTCDatetime
+
+
+class TeamCreate(BaseModel):
+    name: str
+    department_id: str
+    manager_id: str | None = None
+
+
+class TeamUpdate(BaseModel):
+    name: str | None = None
+    department_id: str | None = None
+    manager_id: str | None = None
+    is_active: bool | None = None
+
+
+class TeamRead(UTCModel):
+    id: str
+    department_id: str
+    name: str
+    manager_id: str | None
+    is_active: bool
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
 
 
 # ---- Projects ---------------------------------------------------------------
@@ -120,6 +165,11 @@ class TaskBase(BaseModel):
     category: str = Field(min_length=1)
     category_other_text: str | None = None
     priority: str = "normal"
+    # Explicit override for the task's "home" team; when omitted at creation,
+    # routers/tasks.py::create_task defaults it from the assignee's (or, with
+    # no assignee given, the creator's) current team_id — see the comment on
+    # Task.team_id in models.py. Never re-derived after creation.
+    team_id: str | None = None
 
     @model_validator(mode="after")
     def _validate_other_text(self):
@@ -145,6 +195,7 @@ class TaskUpdate(BaseModel):
     priority: str | None = None
     position: int | None = None
     status: TaskStatus | None = None
+    team_id: str | None = None
     custom_values: dict[str, str] | None = None
 
 

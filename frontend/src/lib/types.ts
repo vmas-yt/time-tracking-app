@@ -28,6 +28,7 @@ export interface User {
   full_name: string;
   role: UserRole;
   manager_id: string | null;
+  team_id: string | null;
   is_active: boolean;
   deactivated_at: string | null;
   created_at: string;
@@ -38,6 +39,29 @@ export interface Project {
   name: string;
   description: string | null;
   created_at: string;
+}
+
+// Round A org structure (docs/PRD.md-adjacent design work): Department is the
+// top-level grouping, Team sits under a Department and carries the
+// "derived, auto-synced" manager relationship — a User assigned to a Team
+// has their `manager_id` silently kept in sync with the Team's manager by
+// the backend (see `UserFormPanel`'s read-only Manager field once
+// `team_id` is set).
+export interface Department {
+  id: string;
+  name: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  department_id: string;
+  manager_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Task {
@@ -53,6 +77,7 @@ export interface Task {
   priority: TaskPriority;
   status: TaskStatus;
   position: number;
+  team_id: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;

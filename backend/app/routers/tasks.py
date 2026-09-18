@@ -36,6 +36,7 @@ from app.services.tasks import (
     validate_dropdown_value,
     validate_project_exists,
 )
+from app.services.teams import validate_team_id
 from app.services.users import validate_assignee_active
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -114,6 +115,8 @@ def create_task(
     validate_project_exists(db, task_in.project_id)
     validate_dropdown_value(db, DropdownOptionScope.TASK_CATEGORY, task_in.category)
     validate_dropdown_value(db, DropdownOptionScope.TASK_PRIORITY, task_in.priority)
+    if task_in.team_id is not None:
+        validate_team_id(db, task_in.team_id)
 
     task_data = task_in.model_dump(exclude={"custom_values"})
     task = Task(
@@ -123,6 +126,15 @@ def create_task(
     )
     if task.assignee_id is None:
         task.assignee_id = current_user.id
+    if task.team_id is None:
+        # One-time default at creation (never re-derived later, see the
+        # comment on Task.team_id in models.py): the resolved assignee's
+        # team_id — which, since assignee_id was just self-assigned to the
+        # creator above when none was given, naturally covers both "an
+        # assignee is given" (use their team) and "no assignee given" (use
+        # the creator's team, because the creator *is* the assignee here).
+        resolved_assignee = db.get(User, task.assignee_id) if task.assignee_id else None
+        task.team_id = resolved_assignee.team_id if resolved_assignee else None
     db.add(task)
     db.flush()
     if task_in.custom_values:
@@ -160,6 +172,8 @@ def update_task(
         validate_dropdown_value(db, DropdownOptionScope.TASK_CATEGORY, updates["category"])
     if "priority" in updates:
         validate_dropdown_value(db, DropdownOptionScope.TASK_PRIORITY, updates["priority"])
+    if "team_id" in updates:
+        validate_team_id(db, updates["team_id"])
 
     if updates:
         for field, value in updates.items():

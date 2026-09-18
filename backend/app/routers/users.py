@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.security import hash_password, verify_password
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import User, UserRole
+from app.models import Team, User, UserRole
 from app.schemas import (
     PasswordChangeRequest,
     PasswordResetRequest,
@@ -13,6 +13,7 @@ from app.schemas import (
     UserUpdate,
 )
 from app.services.authz import assert_admin
+from app.services.teams import sync_team_manager, validate_team_id
 from app.services.users import deactivate_user, is_last_active_admin, validate_manager_id
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -48,6 +49,7 @@ def create_user(
     if db.query(User).filter(User.email == user_in.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
     validate_manager_id(db, user_in.manager_id, target_user_id=None)
+    validate_team_id(db, user_in.team_id)
 
     user = User(
         email=user_in.email,
@@ -55,9 +57,19 @@ def create_user(
         hashed_password=hash_password(user_in.password),
         role=user_in.role,
         manager_id=user_in.manager_id,
+        team_id=user_in.team_id,
         is_active=True,
     )
     db.add(user)
+    if user.team_id is not None:
+        # Flush first so the just-added row is visible to
+        # sync_team_manager's raw bulk UPDATE (autoflush is off — see
+        # app/database.py). Picks up the team's current manager_id
+        # immediately, whatever the request sent for manager_id (see the
+        # note on User.manager_id in models.py).
+        db.flush()
+        team = db.get(Team, user.team_id)
+        sync_team_manager(db, team)
     db.commit()
     db.refresh(user)
     return user
@@ -128,9 +140,22 @@ def update_user(
 
     if "manager_id" in updates:
         validate_manager_id(db, updates["manager_id"], target_user_id=user_id)
+    if "team_id" in updates:
+        validate_team_id(db, updates["team_id"])
 
     for field, value in updates.items():
         setattr(user, field, value)
+
+    if "team_id" in updates and updates["team_id"] is not None:
+        # Same rationale as create_user: sync immediately whenever team_id
+        # is set/changed to a non-null value, so the member picks up the
+        # team's manager_id right away rather than staying stale until the
+        # next unrelated team edit. Whatever manager_id this same request
+        # may also have sent gets overwritten by this — see the note on
+        # User.manager_id in models.py.
+        db.flush()
+        team = db.get(Team, updates["team_id"])
+        sync_team_manager(db, team)
 
     if deactivating:
         deactivate_user(db, user, current_user)

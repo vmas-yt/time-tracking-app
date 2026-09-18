@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
-import type { User, UserRole } from "@/lib/types";
+import type { Team, User, UserRole } from "@/lib/types";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -51,7 +51,7 @@ function ResetPasswordRow({
 
   return (
     <tr className="border-b border-canvas-soft bg-canvas-soft last:border-0">
-      <td className="py-2 text-sm text-body" colSpan={4}>
+      <td className="py-2 text-sm text-body" colSpan={5}>
         New password for <span className="font-semibold text-ink">{user.full_name}</span>
       </td>
       <td className="py-2" colSpan={2}>
@@ -80,6 +80,7 @@ function ResetPasswordRow({
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -92,10 +93,10 @@ export default function UsersPage() {
 
   const load = () => {
     setLoading(true);
-    api
-      .listUsers({ includeInactive: true })
-      .then((list) => {
-        setUsers(list);
+    Promise.all([api.listUsers({ includeInactive: true }), api.listTeams({ includeInactive: true })])
+      .then(([userList, teamList]) => {
+        setUsers(userList);
+        setTeams(teamList);
         setError(null);
       })
       .catch((err) => setError(errorMessage(err)))
@@ -175,6 +176,7 @@ export default function UsersPage() {
                   <th className="py-2 font-semibold">Name</th>
                   <th className="py-2 font-semibold">Email</th>
                   <th className="py-2 font-semibold">Role</th>
+                  <th className="py-2 font-semibold">Team</th>
                   <th className="py-2 font-semibold">Manager</th>
                   <th className="py-2 font-semibold">Status</th>
                   <th className="py-2 font-semibold">Actions</th>
@@ -197,6 +199,7 @@ export default function UsersPage() {
                     );
                   }
                   const manager = users.find((m) => m.id === u.manager_id);
+                  const team = teams.find((t) => t.id === u.team_id);
                   return (
                     <tr key={u.id} className={cn("border-b border-canvas-soft last:border-0", !u.is_active && "opacity-50")}>
                       <td className="py-2 font-medium text-ink">
@@ -206,6 +209,7 @@ export default function UsersPage() {
                       </td>
                       <td className="py-2 text-mute">{u.email}</td>
                       <td className="py-2 text-body">{ROLE_LABEL[u.role]}</td>
+                      <td className="py-2 text-body">{team?.name ?? "—"}</td>
                       <td className="py-2 text-body">{manager?.full_name ?? "—"}</td>
                       <td className="py-2">
                         {u.is_active ? <Badge tone="green">Active</Badge> : <Badge tone="red">Deactivated</Badge>}
@@ -255,6 +259,7 @@ export default function UsersPage() {
         mode={formMode}
         user={editingUser}
         users={users}
+        teams={teams}
         onClose={() => setFormOpen(false)}
         onSaved={(user, { created }) => {
           upsertUser(user);

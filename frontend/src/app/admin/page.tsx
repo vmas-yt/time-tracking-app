@@ -12,7 +12,7 @@ export default function AdminIndexPage() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace("/admin/projects");
+    router.replace("/admin/departments");
   }, [router]);
 
   return null;

@@ -6,6 +6,7 @@ import type {
   CustomField,
   CustomFieldType,
   CycleTimePoint,
+  Department,
   DropdownOption,
   DropdownOptionScope,
   LeadTimePoint,
@@ -17,6 +18,7 @@ import type {
   TaskPriority,
   TaskStatus,
   TaskType,
+  Team,
   ThroughputBucket,
   TimeEntry,
   User,
@@ -85,6 +87,7 @@ export const api = {
     full_name: string;
     role?: UserRole;
     manager_id?: string | null;
+    team_id?: string | null;
     password: string;
   }) => request<User>("/users", { method: "POST", body: JSON.stringify(input) }),
   updateUser: (
@@ -94,6 +97,7 @@ export const api = {
       email: string;
       role: UserRole;
       manager_id: string | null;
+      team_id: string | null;
       is_active: boolean;
     }>
   ) => request<User>(`/users/${userId}`, { method: "PATCH", body: JSON.stringify(input) }),
@@ -111,6 +115,46 @@ export const api = {
   updateProject: (projectId: string, input: Partial<{ name: string; description: string }>) =>
     request<Project>(`/projects/${projectId}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteProject: (projectId: string) => request<void>(`/projects/${projectId}`, { method: "DELETE" }),
+
+  // Round A org structure — Departments/Teams. `include_inactive` mirrors
+  // `listUsers`'s own param so a deactivated department/team keeps showing
+  // (grayed out, with a Reactivate action) instead of vanishing from the
+  // admin table it was managed from.
+  listDepartments: (params?: { includeInactive?: boolean }) => {
+    const query = new URLSearchParams();
+    if (params?.includeInactive) query.set("include_inactive", "true");
+    const qs = query.toString();
+    return request<Department[]>(`/departments${qs ? `?${qs}` : ""}`);
+  },
+  createDepartment: (name: string) =>
+    request<Department>("/departments", { method: "POST", body: JSON.stringify({ name }) }),
+  updateDepartment: (departmentId: string, input: Partial<{ name: string; is_active: boolean }>) =>
+    request<Department>(`/departments/${departmentId}`, { method: "PATCH", body: JSON.stringify(input) }),
+  // Despite the verb, soft-deactivates (sets is_active=false) and returns
+  // the updated Department — same shape as `deactivateUser`. 409 if the
+  // department still has active teams under it, surfaced verbatim by
+  // callers via `errorMessage`, same as `deleteProject`'s "has tasks linked
+  // to it" guard.
+  deactivateDepartment: (departmentId: string) =>
+    request<Department>(`/departments/${departmentId}`, { method: "DELETE" }),
+
+  listTeams: (params?: { departmentId?: string; includeInactive?: boolean }) => {
+    const query = new URLSearchParams();
+    if (params?.departmentId) query.set("department_id", params.departmentId);
+    if (params?.includeInactive) query.set("include_inactive", "true");
+    const qs = query.toString();
+    return request<Team[]>(`/teams${qs ? `?${qs}` : ""}`);
+  },
+  createTeam: (input: { name: string; department_id: string; manager_id?: string | null }) =>
+    request<Team>("/teams", { method: "POST", body: JSON.stringify(input) }),
+  updateTeam: (
+    teamId: string,
+    input: Partial<{ name: string; department_id: string; manager_id: string | null; is_active: boolean }>
+  ) => request<Team>(`/teams/${teamId}`, { method: "PATCH", body: JSON.stringify(input) }),
+  // Despite the verb, soft-deactivates and returns the updated Team — same
+  // shape as `deactivateDepartment` above. 409 if the team still has active
+  // members assigned to it.
+  deactivateTeam: (teamId: string) => request<Team>(`/teams/${teamId}`, { method: "DELETE" }),
 
   listTasks: (params?: {
     projectId?: string;
