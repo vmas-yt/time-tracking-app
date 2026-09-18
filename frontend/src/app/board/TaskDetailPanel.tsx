@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, ApiError } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
 import type { AuditEntry, Comment, TaskCategory, TaskPriority } from "@/lib/types";
 import { TASK_PRIORITIES } from "@/lib/types";
 import { Badge } from "@/components/ui/Badge";
@@ -10,6 +11,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Input, Select } from "@/components/ui/Input";
+import { SlideOver, SlideOverHeader } from "@/components/ui/SlideOver";
 import { useBoard } from "@/board/store";
 import { formatRelativeTime } from "@/board/format";
 import { activeOptions, categoryLabelFor } from "@/lib/options";
@@ -23,12 +25,6 @@ const STATUS_TONE = {
   on_hold: "amber",
   completed: "green",
 } as const;
-
-function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
-  if (err instanceof Error) return err.message;
-  return "Something went wrong";
-}
 
 export function TaskDetailPanel() {
   const board = useBoard();
@@ -235,47 +231,37 @@ export function TaskDetailPanel() {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end">
-      <button
-        type="button"
-        aria-label="Close task details"
-        onClick={() => board.selectTask(null)}
-        className="absolute inset-0 bg-ink/30 backdrop-blur-[2px] animate-[fade-in_0.15s_ease-out]"
-      />
-      <div className="relative flex h-full w-full max-w-[520px] flex-col overflow-y-auto bg-canvas-soft shadow-2xl shadow-ink/25 animate-[slide-in_0.22s_cubic-bezier(0.16,1,0.3,1)]">
-        <div className="flex items-start justify-between gap-4 border-b border-canvas px-6 py-5">
-          {editing ? (
-            <div className="w-full space-y-1">
-              <span className="text-xs font-semibold uppercase tracking-wide text-mute">Editing task</span>
-              <h2 className="text-lg font-bold leading-tight tracking-tight text-ink">{task.title}</h2>
+    <>
+    <SlideOver
+      open
+      onClose={() => board.selectTask(null)}
+      widthClassName="max-w-[520px]"
+      closeLabel="Close task details"
+      disableEscapeClose
+    >
+      <SlideOverHeader onClose={() => board.selectTask(null)}>
+        {editing ? (
+          <div className="w-full space-y-1">
+            <span className="text-xs font-semibold uppercase tracking-wide text-mute">Editing task</span>
+            <h2 className="text-lg font-bold leading-tight tracking-tight text-ink">{task.title}</h2>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge tone={STATUS_TONE[task.status]}>{task.status.replace("_", " ")}</Badge>
+              {task.task_type === "ad_hoc" && <Badge tone="amber">Ad-hoc</Badge>}
+              {task.priority === "expedite" && <Badge tone="red">Expedite</Badge>}
+              <Badge tone="blue">{categoryLabel}</Badge>
+              {task.archived_at && <Badge tone="gray">Archived</Badge>}
             </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Badge tone={STATUS_TONE[task.status]}>{task.status.replace("_", " ")}</Badge>
-                {task.task_type === "ad_hoc" && <Badge tone="amber">Ad-hoc</Badge>}
-                {task.priority === "expedite" && <Badge tone="red">Expedite</Badge>}
-                <Badge tone="blue">{categoryLabel}</Badge>
-                {task.archived_at && <Badge tone="gray">Archived</Badge>}
-              </div>
-              <h2 className="text-xl font-bold leading-tight tracking-tight text-ink">{task.title}</h2>
-              <p className="text-xs text-mute">
-                Assigned to <span className="font-semibold text-body">{assignee?.full_name ?? "Unassigned"}</span>
-                {creator && creator.id !== assignee?.id && <> · created by {creator.full_name}</>}
-              </p>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => board.selectTask(null)}
-            className="shrink-0 rounded-full p-1.5 text-mute hover:bg-canvas hover:text-ink"
-            aria-label="Close"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
+            <h2 className="text-xl font-bold leading-tight tracking-tight text-ink">{task.title}</h2>
+            <p className="text-xs text-mute">
+              Assigned to <span className="font-semibold text-body">{assignee?.full_name ?? "Unassigned"}</span>
+              {creator && creator.id !== assignee?.id && <> · created by {creator.full_name}</>}
+            </p>
+          </div>
+        )}
+      </SlideOverHeader>
 
         <div className="space-y-5 p-6">
           {!editing && canEdit && (
@@ -495,7 +481,7 @@ export function TaskDetailPanel() {
             </div>
           )}
         </div>
-      </div>
+    </SlideOver>
 
       <ConfirmDialog
         open={confirmingDelete}
@@ -517,27 +503,6 @@ export function TaskDetailPanel() {
         onConfirm={handleArchive}
         onCancel={() => setOfferArchive(false)}
       />
-
-      <style jsx global>{`
-        @keyframes slide-in {
-          from {
-            transform: translateX(24px);
-            opacity: 0;
-          }
-          to {
-            transform: translateX(0);
-            opacity: 1;
-          }
-        }
-        @keyframes fade-in {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
-        }
-      `}</style>
-    </div>
+    </>
   );
 }

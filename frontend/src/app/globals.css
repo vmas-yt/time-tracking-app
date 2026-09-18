@@ -53,3 +53,26 @@ body {
 ::selection {
   background-color: var(--color-primary-neutral);
 }
+
+/* Shared slide-over panel animation (components/ui/SlideOver.tsx) — one
+   definition for every right-side panel in the app (task add/edit, admin
+   entity create/edit, user profile) instead of a copy per component. */
+@keyframes slide-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
