@@ -160,10 +160,70 @@ def test_delete_nonexistent_user_404(client, auth_headers):
 
 
 def test_cannot_deactivate_the_only_remaining_admin(client, auth_headers):
+    """The only reachable way to hit `is_last_active_admin`'s guard through
+    this API is for the sole active admin to try to deactivate themselves
+    (any other admin calling this endpoint is themselves an active admin,
+    so the count can never be 1 for a different target) — which is also
+    exactly the new self-deactivation guard's scenario. That guard is
+    checked first (see `deactivate_user`), so the sole admin gets the more
+    specific "own account" reason rather than the "only remaining admin"
+    one; both are 409s and the account is left untouched either way.
+    """
     me = client.get("/users/me", headers=auth_headers).json()
     resp = client.delete(f"/users/{me['id']}", headers=auth_headers)
     assert resp.status_code == 409
-    assert "only remaining admin" in resp.json()["detail"]
+    assert "own account" in resp.json()["detail"]
+
+
+def test_admin_cannot_deactivate_own_account_via_delete(client, auth_headers):
+    # A second active admin exists so this can't be conflated with the
+    # only-remaining-admin guard — this must be rejected purely because the
+    # actor is deactivating themselves.
+    _create_user(client, auth_headers, "admin4@example.com", role="admin")
+
+    me = client.get("/users/me", headers=auth_headers).json()
+    resp = client.delete(f"/users/{me['id']}", headers=auth_headers)
+    assert resp.status_code == 409
+    assert "own account" in resp.json()["detail"]
+
+    still_active = client.get("/users/me", headers=auth_headers).json()
+    assert still_active["is_active"] is True
+
+
+def test_admin_cannot_deactivate_own_account_via_patch(client, auth_headers):
+    _create_user(client, auth_headers, "admin5@example.com", role="admin")
+
+    me = client.get("/users/me", headers=auth_headers).json()
+    resp = client.patch(f"/users/{me['id']}", json={"is_active": False}, headers=auth_headers)
+    assert resp.status_code == 409
+    assert "own account" in resp.json()["detail"]
+
+    still_active = client.get("/users/me", headers=auth_headers).json()
+    assert still_active["is_active"] is True
+
+
+def test_admin_self_deactivate_combined_payload_does_not_apply_other_fields_first(
+    client, auth_headers
+):
+    """A combined payload like {"role": "employee", "is_active": false} must
+    be rejected before *any* field (e.g. role) is applied — mirroring the
+    existing last-active-admin guard's ordering guarantee."""
+    _create_user(client, auth_headers, "admin6@example.com", role="admin")
+
+    me = client.get("/users/me", headers=auth_headers).json()
+    assert me["role"] == "admin"
+
+    resp = client.patch(
+        f"/users/{me['id']}",
+        json={"role": "employee", "is_active": False},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 409
+    assert "own account" in resp.json()["detail"]
+
+    refreshed = client.get("/users/me", headers=auth_headers).json()
+    assert refreshed["role"] == "admin"
+    assert refreshed["is_active"] is True
 
 
 def test_can_deactivate_an_admin_when_another_active_admin_exists(client, auth_headers):

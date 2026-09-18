@@ -38,6 +38,53 @@ def test_admin_can_create_project(client, auth_headers):
     assert resp.status_code == 201
 
 
+def test_admin_can_patch_project_name_and_description(client, auth_headers):
+    project = client.post(
+        "/projects", json={"name": "Iota", "description": "Original"}, headers=auth_headers
+    ).json()
+
+    resp = client.patch(
+        f"/projects/{project['id']}",
+        json={"name": "Iota Renamed", "description": "Updated"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "Iota Renamed"
+    assert body["description"] == "Updated"
+
+
+def test_admin_can_patch_project_partial_update(client, auth_headers):
+    project = client.post(
+        "/projects", json={"name": "Kappa", "description": "Keep me"}, headers=auth_headers
+    ).json()
+
+    resp = client.patch(
+        f"/projects/{project['id']}", json={"name": "Kappa Renamed"}, headers=auth_headers
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "Kappa Renamed"
+    assert body["description"] == "Keep me"
+
+
+def test_non_admin_cannot_patch_project(client, auth_headers):
+    employee_headers = _create_employee(client, auth_headers, "proj_emp4@example.com")
+    project = client.post("/projects", json={"name": "Lambda"}, headers=auth_headers).json()
+
+    resp = client.patch(
+        f"/projects/{project['id']}", json={"name": "Hacked"}, headers=employee_headers
+    )
+    assert resp.status_code == 403
+
+
+def test_patch_nonexistent_project_404(client, auth_headers):
+    resp = client.patch(
+        "/projects/does-not-exist", json={"name": "x"}, headers=auth_headers
+    )
+    assert resp.status_code == 404
+
+
 def test_non_admin_cannot_delete_project(client, auth_headers):
     employee_headers = _create_employee(client, auth_headers, "proj_emp3@example.com")
     project = client.post("/projects", json={"name": "Delta"}, headers=auth_headers).json()

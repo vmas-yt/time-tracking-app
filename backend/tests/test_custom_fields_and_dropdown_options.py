@@ -342,6 +342,60 @@ def test_patch_task_rejects_invalid_category(client, auth_headers, task_id):
     assert resp.status_code == 400
 
 
+# ---- Custom field PATCH (name only) -----------------------------------------
+
+
+def test_admin_can_rename_custom_field(client, auth_headers):
+    field = _create_field(client, auth_headers, "Notes", "text")
+    resp = client.patch(
+        f"/admin/custom-fields/{field['id']}", json={"name": "Comments"}, headers=auth_headers
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "Comments"
+    assert body["field_type"] == "text"
+
+
+def test_patch_custom_field_does_not_accept_field_type_change(client, auth_headers):
+    field = _create_field(client, auth_headers, "Notes", "text")
+    resp = client.patch(
+        f"/admin/custom-fields/{field['id']}",
+        json={"name": "Notes", "field_type": "number"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    # field_type isn't part of CustomFieldUpdate, so it's silently ignored
+    # rather than applied.
+    assert resp.json()["field_type"] == "text"
+
+
+def test_patch_custom_field_preserves_options(client, auth_headers):
+    field = _create_field(client, auth_headers, "Tag", "select", options=["A", "B"])
+    resp = client.patch(
+        f"/admin/custom-fields/{field['id']}", json={"name": "Renamed Tag"}, headers=auth_headers
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "Renamed Tag"
+    assert {o["value"] for o in body["options"]} == {"A", "B"}
+
+
+def test_non_admin_cannot_patch_custom_field(client, auth_headers):
+    employee_headers = _create_employee(client, auth_headers, "cf_emp1@example.com")
+    field = _create_field(client, auth_headers, "Notes", "text")
+    resp = client.patch(
+        f"/admin/custom-fields/{field['id']}", json={"name": "Hacked"}, headers=employee_headers
+    )
+    assert resp.status_code == 403
+
+
+def test_patch_nonexistent_custom_field_404(client, auth_headers):
+    resp = client.patch(
+        "/admin/custom-fields/does-not-exist", json={"name": "x"}, headers=auth_headers
+    )
+    assert resp.status_code == 404
+
+
 # ---- Custom field response shape & cascade delete --------------------------
 
 

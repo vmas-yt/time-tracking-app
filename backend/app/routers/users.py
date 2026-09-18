@@ -111,6 +111,11 @@ def update_user(
     # role first and let the last-active-admin guard check a role that's
     # already been vacated, silently bypassing it.
     deactivating = is_active_target is False and user.is_active
+    if deactivating and user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot deactivate your own account.",
+        )
     if deactivating and is_last_active_admin(db, user):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

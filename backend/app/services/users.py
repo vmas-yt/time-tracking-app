@@ -70,6 +70,11 @@ def deactivate_user(db: Session, user: User, actor: User) -> User:
     `services/tasks.py::change_status`), never auto-stopping them since the
     underlying work isn't necessarily done just because this person left.
     """
+    if user.id == actor.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot deactivate your own account.",
+        )
     if is_last_active_admin(db, user):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

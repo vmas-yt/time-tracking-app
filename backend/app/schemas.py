@@ -93,6 +93,11 @@ class ProjectCreate(ProjectBase):
     pass
 
 
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
 class ProjectRead(ProjectBase, UTCModel):
     id: str
     created_at: UTCDatetime
@@ -237,6 +242,12 @@ class CustomFieldCreate(BaseModel):
     name: str
     field_type: CustomFieldType
     options: list[str] | None = None
+
+
+class CustomFieldUpdate(BaseModel):
+    # field_type is deliberately not editable here — changing a field's data
+    # type after real task values exist is a separate, riskier problem.
+    name: str | None = None
 
 
 class CustomFieldRead(UTCModel):

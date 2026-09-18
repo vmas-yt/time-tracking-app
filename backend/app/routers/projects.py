@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import Project, Task, User
-from app.schemas import ProjectCreate, ProjectRead
+from app.schemas import ProjectCreate, ProjectRead, ProjectUpdate
 from app.services.authz import assert_admin
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -36,6 +36,27 @@ def get_project(
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+@router.patch("/{project_id}", response_model=ProjectRead)
+def update_project(
+    project_id: str,
+    update: ProjectUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_admin(current_user)
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    updates = update.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(project, field, value)
+
+    db.commit()
+    db.refresh(project)
     return project
 
 

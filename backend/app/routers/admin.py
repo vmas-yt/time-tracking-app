@@ -18,6 +18,7 @@ from app.schemas import (
     BoardConfigUpdate,
     CustomFieldCreate,
     CustomFieldRead,
+    CustomFieldUpdate,
     DropdownOptionCreate,
     DropdownOptionRead,
     DropdownOptionUpdate,
@@ -152,6 +153,27 @@ def create_custom_field(
                     position=position,
                 )
             )
+    db.commit()
+    db.refresh(field)
+    return _serialize_field(db, field)
+
+
+@router.patch("/custom-fields/{field_id}", response_model=CustomFieldRead)
+def update_custom_field(
+    field_id: str,
+    update: CustomFieldUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_admin(current_user)
+    field = db.get(CustomFieldDefinition, field_id)
+    if not field:
+        raise HTTPException(status_code=404, detail="Custom field not found")
+
+    updates = update.model_dump(exclude_unset=True)
+    for key, value in updates.items():
+        setattr(field, key, value)
+
     db.commit()
     db.refresh(field)
     return _serialize_field(db, field)
