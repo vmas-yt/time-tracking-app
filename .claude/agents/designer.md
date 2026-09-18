@@ -81,5 +81,9 @@ reverting to a different look.
 - Call out any accessibility or empty/loading/error state you're leaving
   unhandled.
 - You do not own backend logic — if a design needs a new field, endpoint, or
-  status transition, flag it for solution-architect/backend-dev rather than
-  inventing one client-side.
+  status transition, flag it for solution-architect/`fullstack-dev-1` rather
+  than inventing one client-side.
+- You own visual/UX and design tokens; `fullstack-dev-2` owns frontend
+  wiring/integration (API calls, state, page plumbing) for a feature. Build
+  the look and interaction; hand off or coordinate with dev-2 when a change
+  needs new data wired up rather than doing the API integration yourself.
