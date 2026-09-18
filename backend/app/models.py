@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, String, Text, text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -69,6 +69,15 @@ class AuditAction(str, enum.Enum):
     TIMER_PAUSED = "timer_paused"
     TIMER_RESUMED = "timer_resumed"
     TIMER_STOPPED = "timer_stopped"
+    # Manual/retroactive time-logging feature. This column is a *native*
+    # Postgres ENUM (see `TaskAuditEntry.action`'s `Enum(AuditAction)`, which
+    # never sets `native_enum=False`) -- adding this member is therefore not
+    # a no-op on Postgres the way it is on SQLite. See
+    # services/migrations.py::_migrate_audit_action_add_manual_time_logged
+    # for the required `ALTER TYPE ... ADD VALUE` step, verified empirically
+    # against real Postgres 16 (not assumed) per this project's own
+    # near-miss history.
+    MANUAL_TIME_LOGGED = "manual_time_logged"
 
 
 class CustomFieldType(str, enum.Enum):
@@ -314,6 +323,28 @@ class Task(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     first_in_progress_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Manual/retroactive time-logging feature. `is_manual_entry` is durable
+    # and never changes after being set: manual vs. live-tracked is
+    # mutually exclusive and terminal for a given task, used for the
+    # "Manually logged" tag on the card/detail view. Every pre-existing
+    # task correctly defaults to False -- no historical task was ever
+    # manually logged.
+    is_manual_entry: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Deliberately a *new* column, not a repurposing of `first_in_progress_at`
+    # above: that column is `reports.py::cycle_time`'s source of truth for
+    # "this task genuinely sat In Progress", and a manually-logged task never
+    # has an In Progress period at all (it jumps straight to Completed) --
+    # writing the user-supplied Start Date into `first_in_progress_at` would
+    # silently corrupt Cycle Time's meaning by pulling manual tasks into a
+    # report about a period they never experienced. Going forward this gets
+    # populated from two sources: a live-tracked task gets it set to the same
+    # `now` at the exact moment `first_in_progress_at` is first set (see
+    # routers/time_entries.py::start_timer), a manually-logged task gets it
+    # set directly from the user's supplied Start Date. NULL for every
+    # pre-existing row (no backfill) is correct, not a gap: no historical
+    # task needs this populated retroactively, and `first_in_progress_at`
+    # already exists for old data if it's ever needed.
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     project: Mapped["Project | None"] = relationship(back_populates="tasks")
     assignee: Mapped["User | None"] = relationship(back_populates="assigned_tasks", foreign_keys=[assignee_id])
@@ -356,6 +387,13 @@ class TimeEntry(Base):
     last_resumed_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
     accumulated_seconds: Mapped[float] = mapped_column(Float, default=0.0)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Manual/retroactive time-logging feature: True only on the synthetic
+    # terminal entry a manual log creates. Not an audit-trail field --
+    # `TaskAuditEntry` has no FK to `TimeEntry` -- this exists purely so any
+    # `TimeEntry`-scoped endpoint/report can filter manual vs. live entries
+    # without a join to `Task`. Every pre-existing row correctly defaults to
+    # False -- no historical time entry was ever manually logged.
+    is_manual: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # DB-level backstop for the two PRD invariants ("only one open entry per
     # task"; "only one RUNNING timer per user") on top of the query-then-check
@@ -499,6 +537,27 @@ class BoardConfig(Base):
     swimlane_field: Mapped[SwimlaneField] = mapped_column(
         Enum(SwimlaneField), default=SwimlaneField.ASSIGNEE, nullable=False
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class ManualTimeEntrySettings(Base):
+    """Singleton row (id='default') for the admin-editable manual/retroactive
+    time-logging policy -- same singleton pattern as `BoardConfig` above, but
+    deliberately kept as its own table rather than folded into `BoardConfig`
+    itself: that table is mid-restructuring in a separate, not-yet-built
+    round (team-scoped boards), and entangling a brand-new org-wide policy
+    setting with a table about to change shape would create needless
+    coupling. Brand-new table -- `Base.metadata.create_all` creates it with
+    zero migration code needed, same as any other new table; no
+    `ensure_schema_migrations` step exists (or is needed) for it.
+    """
+
+    __tablename__ = "manual_time_entry_settings"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: "default")
+    max_days_back: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )

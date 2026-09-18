@@ -54,6 +54,23 @@ Covers, in order:
      create-copy-drop-rename table rebuild dance instead -- see that
      function's own docstring for the rollback-plan writeup and why the two
      backends are *not* symmetric on rollback.
+  8. Manual/retroactive time-logging feature (schema only): three additive,
+     nullable-or-defaulted columns on existing tables --
+     `tasks.is_manual_entry` (bool, default False), `tasks.started_at`
+     (nullable timestamp, deliberately a *new* column rather than reusing
+     `tasks.first_in_progress_at` -- see that column's own docstring in
+     `models.py`), `time_entries.is_manual` (bool, default False) -- plus
+     one genuinely migration-relevant enum change:
+     `task_audit_entries.action`'s underlying Postgres native `ENUM` type
+     (`auditaction`) needs `MANUAL_TIME_LOGGED` added via `ALTER TYPE ...
+     ADD VALUE`, verified empirically against real Postgres 16 (see
+     `_migrate_audit_action_add_manual_time_logged`'s own docstring) rather
+     than assumed safe. No backfill needed for any of the three columns --
+     every pre-existing row's `False`/`False`/`NULL` defaults are exactly
+     correct, since no historical task or time entry was ever manually
+     logged. `manual_time_entry_settings` is a brand-new table, created
+     entirely by `Base.metadata.create_all` -- no migration code needed for
+     it at all.
 """
 
 import logging
@@ -582,6 +599,80 @@ def _migrate_users_role_nullable(engine: Engine, inspector) -> None:
         )
 
 
+def _migrate_manual_time_entry_columns(engine: Engine, inspector) -> None:
+    """Manual/retroactive time-logging feature (schema only, additive):
+
+      - `tasks.is_manual_entry` BOOLEAN NOT NULL DEFAULT FALSE
+      - `tasks.started_at` TIMESTAMP NULL
+      - `time_entries.is_manual` BOOLEAN NOT NULL DEFAULT FALSE
+
+    No backfill is needed for any of the three: a pre-existing row landing
+    on `is_manual_entry=False` / `is_manual=False` / `started_at=NULL` is
+    exactly correct (no historical task or time entry was ever manually
+    logged), not merely a placeholder. Standard idempotent
+    `inspector.get_columns` guard, same as every other additive column in
+    this module -- safe on both backends, safe to call on every startup.
+    """
+    task_columns = {col["name"] for col in inspector.get_columns("tasks")}
+    with engine.begin() as conn:
+        if "is_manual_entry" not in task_columns:
+            conn.execute(
+                text("ALTER TABLE tasks ADD COLUMN is_manual_entry BOOLEAN NOT NULL DEFAULT FALSE")
+            )
+            logger.info("Schema migration: added tasks.is_manual_entry")
+        if "started_at" not in task_columns:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN started_at TIMESTAMP NULL"))
+            logger.info("Schema migration: added tasks.started_at")
+
+    time_entry_columns = {col["name"] for col in inspector.get_columns("time_entries")}
+    if "is_manual" not in time_entry_columns:
+        with engine.begin() as conn:
+            conn.execute(
+                text("ALTER TABLE time_entries ADD COLUMN is_manual BOOLEAN NOT NULL DEFAULT FALSE")
+            )
+        logger.info("Schema migration: added time_entries.is_manual")
+
+
+def _migrate_audit_action_add_manual_time_logged(engine: Engine, inspector) -> None:
+    """Postgres-only: `task_audit_entries.action` is a *native* Postgres
+    `ENUM` type (`Enum(AuditAction)` in models.py never sets
+    `native_enum=False`) -- confirmed empirically, not assumed, against a
+    real local Postgres 16 database (`inspector.get_columns("task_audit_entries")`
+    reflects the `action` column's type as `sqlalchemy.dialects.postgresql
+    .named_types.ENUM`, and the type `auditaction` shows up in `pg_type`
+    with `typtype = 'e'`). Adding a new Python-side `AuditAction` member
+    (`MANUAL_TIME_LOGGED`) is therefore a real, migration-relevant DDL
+    operation on Postgres -- `ALTER TYPE auditaction ADD VALUE` -- unlike
+    SQLite, which has no real native enum type at the DB level for this
+    column at all (nothing to do there; a plain string column accepts any
+    value already).
+
+    `ADD VALUE IF NOT EXISTS` (supported since Postgres 9.6) makes this
+    naturally idempotent -- safe to run on every startup, including against
+    a database that already has this value from a previous run. Verified
+    directly against real Postgres 16: `ALTER TYPE ... ADD VALUE IF NOT
+    EXISTS` runs successfully inside a transaction (supported since Postgres
+    12; this project targets 16), runs a second time with no error, and a
+    `TaskAuditEntry` row can be inserted with `action='MANUAL_TIME_LOGGED'`
+    afterward -- see test_migration_manual_time_entry_with_real_data.py.
+    """
+    if engine.dialect.name != "postgresql":
+        return
+
+    columns = {col["name"]: col for col in inspector.get_columns("task_audit_entries")}
+    action_col = columns.get("action")
+    if action_col is None or not isinstance(action_col["type"], _pg_enum_type_names()):
+        # Either the table doesn't exist yet on this call (guarded by the
+        # caller) or `action` is no longer a native enum (e.g. some future
+        # round converts it to a plain string, the way `tasks.category`/
+        # `tasks.priority` already were) -- nothing to do in either case.
+        return
+
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TYPE auditaction ADD VALUE IF NOT EXISTS 'MANUAL_TIME_LOGGED'"))
+    logger.info("Schema migration: added 'MANUAL_TIME_LOGGED' to the Postgres auditaction enum type")
+
+
 def ensure_schema_migrations(engine: Engine) -> None:
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
@@ -629,3 +720,14 @@ def ensure_schema_migrations(engine: Engine) -> None:
         # keep from shipping unverified again.
         inspector = inspect(engine)
         _migrate_users_role_nullable(engine, inspector)
+
+    if {"tasks", "time_entries"} <= table_names:
+        _migrate_manual_time_entry_columns(engine, inspector)
+
+    if "task_audit_entries" in table_names:
+        # Re-inspect: needs to see task_audit_entries as it exists right now
+        # (this table is untouched by every migration step above, but a
+        # fresh inspector call here keeps this step correct/self-contained
+        # regardless of ordering changes elsewhere in this function).
+        inspector = inspect(engine)
+        _migrate_audit_action_add_manual_time_logged(engine, inspector)
