@@ -1,8 +1,17 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
+
+// Mount order of every currently-open, Escape-listening SlideOver, shared
+// across instances. A stacked pair (e.g. a custom field's "manage" panel
+// with a nested "add option" panel on top of it) would otherwise each
+// register their own unconditional `Escape -> onClose` listener and both
+// fire on a single keypress, closing both layers at once instead of just
+// the top one. Only the id at the end of this stack (the most recently
+// opened panel) is allowed to act on Escape.
+const escapeStack: string[] = [];
 
 /** Shared right-side slide-over shell — the one interaction pattern for
  * "create/edit/view a thing" across the whole app (Add/Edit Task, task
@@ -39,14 +48,25 @@ export function SlideOver({
    * themselves instead. */
   disableEscapeClose?: boolean;
 }) {
+  const id = useId();
+
   useEffect(() => {
     if (!open || disableEscapeClose) return;
+    escapeStack.push(id);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      // Only the topmost open panel closes on Escape — a stacked panel
+      // beneath it should stay open until the one on top of it is gone.
+      if (e.key === "Escape" && escapeStack[escapeStack.length - 1] === id) {
+        onClose();
+      }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose, disableEscapeClose]);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      const index = escapeStack.lastIndexOf(id);
+      if (index !== -1) escapeStack.splice(index, 1);
+    };
+  }, [open, onClose, disableEscapeClose, id]);
 
   // Keep panels mounted only while open — matches the previous per-component
   // behavior (unmount on close) rather than introducing an exit-animation
