@@ -156,6 +156,19 @@ def update_user(
         db.flush()
         team = db.get(Team, updates["team_id"])
         sync_team_manager(db, team)
+    elif "team_id" in updates and updates["team_id"] is None and "manager_id" not in updates:
+        # Detaching from a team: manager_id was a derived cache of that
+        # team's manager (sync_team_manager), not something an admin set
+        # directly. Leaving it in place would silently freeze it at the old
+        # team's manager — the detached user would keep showing up in that
+        # manager's reports/reminders (both keyed on manager_id) with no
+        # admin having actually chosen that. Clear it so the legacy
+        # directly-editable state (per the note on User.manager_id in
+        # models.py) starts from an honest null instead of a stale cached
+        # value. If this same request also explicitly sends manager_id,
+        # that's respected instead — already applied via the setattr loop
+        # above, so this branch only fires when it wasn't sent.
+        user.manager_id = None
 
     if deactivating:
         deactivate_user(db, user, current_user)

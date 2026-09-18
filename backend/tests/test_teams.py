@@ -388,6 +388,57 @@ def test_clearing_team_manager_clears_members_manager_id(client, auth_headers):
     assert refreshed["manager_id"] is None
 
 
+def test_detaching_user_from_team_clears_manager_id(client, auth_headers):
+    """`manager_id` on a team member is a derived cache of the team's
+    manager (sync_team_manager) — detaching the user (team_id -> null)
+    without clearing it would leave that cache frozen at the old team's
+    manager, so the detached user would keep showing up in that manager's
+    reports/reminders indefinitely with no admin having actually chosen
+    that. QA flagged this as a real gap during Round A verification."""
+    department = _create_department(client, auth_headers, "Engineering Z")
+    manager = _create_manager(client, auth_headers, "team_mgr7@example.com")
+    team = client.post(
+        "/teams",
+        json={"name": "Detach Team", "department_id": department["id"], "manager_id": manager["id"]},
+        headers=auth_headers,
+    ).json()
+    member = _create_employee(client, auth_headers, "team_member8@example.com", team_id=team["id"])
+    assert member["manager_id"] == manager["id"]
+
+    resp = client.patch(f"/users/{member['id']}", json={"team_id": None}, headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["team_id"] is None
+    assert resp.json()["manager_id"] is None
+
+    refreshed = _get_user(client, auth_headers, member["id"])
+    assert refreshed["manager_id"] is None
+
+
+def test_detaching_user_from_team_respects_explicit_manager_id_in_same_request(client, auth_headers):
+    """A combined payload that both clears team_id AND explicitly sets a new
+    manager_id in the same request should honor the explicit manager_id,
+    not silently null it out."""
+    department = _create_department(client, auth_headers, "Engineering Z2")
+    old_manager = _create_manager(client, auth_headers, "team_mgr8@example.com")
+    new_manager = _create_manager(client, auth_headers, "team_mgr9@example.com")
+    team = client.post(
+        "/teams",
+        json={"name": "Detach Team 2", "department_id": department["id"], "manager_id": old_manager["id"]},
+        headers=auth_headers,
+    ).json()
+    member = _create_employee(client, auth_headers, "team_member9@example.com", team_id=team["id"])
+    assert member["manager_id"] == old_manager["id"]
+
+    resp = client.patch(
+        f"/users/{member['id']}",
+        json={"team_id": None, "manager_id": new_manager["id"]},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["team_id"] is None
+    assert resp.json()["manager_id"] == new_manager["id"]
+
+
 def test_user_with_no_team_id_keeps_manager_id_directly_settable(client, auth_headers):
     manager = _create_manager(client, auth_headers, "team_mgr6@example.com")
     employee = _create_employee(client, auth_headers, "team_member7@example.com")
