@@ -100,16 +100,83 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String, nullable=False)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.EMPLOYEE, nullable=False)
+    # `manager_id` is the field `authz.py`/`reports.py`/`notifications.py` key
+    # off of for review/reminder scoping. For a user with a `team_id`, this
+    # becomes a derived, auto-synced cache of that team's `Team.manager_id`
+    # (see services/teams.py::sync_team_manager) — Team.manager_id is
+    # authoritative going forward. For a user with `team_id = None`, this
+    # column stays directly admin-editable exactly as before (legacy path).
     manager_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # Org structure (department -> team). Nullable is a permanent, legitimate
+    # state (a not-yet-placed new hire), not just a pre-migration marker —
+    # see services/migrations.py::_migrate_org_structure_backfill for why the
+    # bootstrap-team backfill is careful never to overwrite a null set after
+    # the fact.
+    team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     deactivated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     manager: Mapped["User | None"] = relationship(remote_side="User.id")
+    team: Mapped["Team | None"] = relationship(back_populates="members", foreign_keys=[team_id])
     assigned_tasks: Mapped[list["Task"]] = relationship(
         back_populates="assignee", foreign_keys="Task.assignee_id"
     )
     time_entries: Mapped[list["TimeEntry"]] = relationship(back_populates="user")
+
+
+class Department(Base):
+    """Top level of the Department -> Team org structure (Round A)."""
+
+    __tablename__ = "departments"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    teams: Mapped[list["Team"]] = relationship(back_populates="department")
+
+
+class Team(Base):
+    """A team within a department. `manager_id` is authoritative for the
+    team's line-manager relationship going forward — see the note on
+    `User.manager_id` and `services/teams.py::sync_team_manager`."""
+
+    __tablename__ = "teams"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    department_id: Mapped[str] = mapped_column(ForeignKey("departments.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    # `use_alter`/`name=` breaks the Team<->User circular FK dependency
+    # (Team.manager_id -> users.id, User.team_id -> teams.id) so
+    # `Base.metadata.create_all` can create both tables without raising
+    # `CircularDependencyError` on a fresh database. Verified directly
+    # against both backends: on Postgres this defers to a separate `ALTER
+    # TABLE teams ADD CONSTRAINT ... FOREIGN KEY` issued after every table
+    # is created (real, enforced constraint); on SQLite (which has no
+    # `ALTER TABLE ADD CONSTRAINT` at all) SQLAlchemy instead inlines the
+    # forward-referencing FK directly into `CREATE TABLE teams`, which
+    # SQLite accepts without error since it never validates FK targets at
+    # `CREATE TABLE`/DDL time regardless — consistent with this project's
+    # existing FK columns already being unenforced on SQLite (no
+    # `PRAGMA foreign_keys=ON` is set anywhere in app/database.py).
+    manager_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", use_alter=True, name="fk_teams_manager_id"), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    __table_args__ = (
+        Index("uq_team_department_name", "department_id", "name", unique=True),
+    )
+
+    department: Mapped["Department"] = relationship(back_populates="teams")
+    manager: Mapped["User | None"] = relationship(foreign_keys=[manager_id])
+    members: Mapped[list["User"]] = relationship(back_populates="team", foreign_keys="User.team_id")
 
 
 class Project(Base):
@@ -130,6 +197,13 @@ class Task(Base):
     project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
     assignee_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_by_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # A task's "home" team — independent of its current assignee (Jira/Linear
+    # style), set once at creation (defaults to the assignee's team, else the
+    # creator's team, else null) and never re-derived if the assignee later
+    # changes teams. That defaulting logic lives wherever tasks are created
+    # (routers/tasks.py::create_task) — out of scope for this schema-only
+    # round; see db-admin's Round A report.
+    team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
 
     title: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -160,6 +234,7 @@ class Task(Base):
 
     project: Mapped["Project | None"] = relationship(back_populates="tasks")
     assignee: Mapped["User | None"] = relationship(back_populates="assigned_tasks", foreign_keys=[assignee_id])
+    team: Mapped["Team | None"] = relationship(foreign_keys=[team_id])
     time_entries: Mapped[list["TimeEntry"]] = relationship(
         back_populates="task", cascade="all, delete-orphan"
     )
