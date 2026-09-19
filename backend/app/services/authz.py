@@ -62,6 +62,8 @@ def can_view_task(current_user: User, task: Task) -> bool:
         return True
     if has_permission(current_user, Permission.VIEW_ALL_TASKS):   # NEW — appended last
         return True
+    if task.team_id is not None and current_user.team_id == task.team_id:   # NEW — Round C
+        return True
     return False
 
 

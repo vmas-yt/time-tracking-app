@@ -291,6 +291,33 @@ export interface CustomField {
 export interface BoardConfig {
   swimlane_field: SwimlaneField;
   updated_at: string;
+  // Round C (docs/design/team-scoped-boards-design.md §4.3/§5.3): server-
+  // computed `has_permission(current_user, Permission.MANAGE_BOARD_CONFIG)` —
+  // the same boolean the `PATCH` handler itself checks before its own `403`.
+  // This is the fix for the pre-existing `board/store.tsx` bug that derived
+  // "can manage the board config" from the legacy `role === "admin"` string
+  // instead of the real, server-side permission: a custom role granted
+  // `manage_board_config` (Round B3) couldn't actually use the "Group lanes
+  // by" control even though the backend would accept the `PATCH`. Read this
+  // field directly rather than re-deriving permission from `currentUser.role`.
+  can_manage: boolean;
+}
+
+// Round C (docs/design/team-scoped-boards-design.md §4.1/§4.2) — the
+// per-team analogue of `BoardConfig` above. One row per `Team` (lazily
+// created on first read/write, same idiom as the global singleton),
+// holding the two things configurable about that team's board: which field
+// groups cards into swim lanes, and an optional display name independent
+// of `Team.name` (falls back to the team's own name when null, §3 of the
+// design doc). `can_manage` is server-computed exactly like `BoardConfig`'s
+// own field above — same fix, applied identically to both endpoints so the
+// global and per-team screens never diverge on how they derive permission.
+export interface TeamBoardConfig {
+  team_id: string;
+  board_name: string | null;
+  swimlane_field: SwimlaneField;
+  updated_at: string;
+  can_manage: boolean;
 }
 
 export interface CycleTimePoint {

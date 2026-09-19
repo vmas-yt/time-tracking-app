@@ -13,11 +13,17 @@ import { BoardScreen } from "./BoardScreen";
 // — no dummy data or client-side state machine simulating the backend.
 // `?project=<id>` (linked from the project list on `/`) scopes the board to
 // one project; tasks are standalone by default per the PRD.
+// `?team=<id>` (Round C, docs/design/team-scoped-boards-design.md §6.1)
+// scopes the board to one team's tasks, mirroring `?project=<id>` exactly.
+// Plumbing only for now — no team-switcher control renders yet (designer,
+// follow-on round); absent, this behaves identically to today's unscoped
+// board.
 function BoardWithProject() {
   const params = useSearchParams();
   const projectId = params.get("project");
+  const teamId = params.get("team");
   return (
-    <BoardProvider projectId={projectId}>
+    <BoardProvider projectId={projectId} teamId={teamId}>
       <BoardScreen />
     </BoardProvider>
   );

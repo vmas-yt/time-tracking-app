@@ -420,10 +420,34 @@ class CustomFieldRead(UTCModel):
 class BoardConfigRead(UTCModel):
     swimlane_field: SwimlaneField
     updated_at: UTCDatetime
+    # Server-computed (Round C, §5.3 fix) -- has_permission(current_user,
+    # MANAGE_BOARD_CONFIG), the same boolean the PATCH handler evaluates
+    # before its own 403. Not an ORM column, so it isn't populated by
+    # `model_validate(config)` — the router sets it explicitly afterward,
+    # same pattern as TaskRead.custom_values/total_logged_seconds below.
+    can_manage: bool = False
 
 
 class BoardConfigUpdate(BaseModel):
     swimlane_field: SwimlaneField
+
+
+class TeamBoardConfigRead(UTCModel):
+    team_id: str
+    board_name: str | None
+    swimlane_field: SwimlaneField
+    updated_at: UTCDatetime
+    # Server-computed, same as BoardConfigRead.can_manage above (§5.3).
+    can_manage: bool = False
+
+
+class TeamBoardConfigUpdate(BaseModel):
+    """Partial update, `exclude_unset` semantics (matches TeamUpdate/
+    UserUpdate elsewhere): an omitted key leaves that field unchanged; an
+    explicit `board_name: null` clears it back to the `Team.name` fallback."""
+
+    board_name: str | None = None
+    swimlane_field: SwimlaneField | None = None
 
 
 class ManualEntrySettingsRead(UTCModel):

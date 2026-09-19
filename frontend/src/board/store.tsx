@@ -53,6 +53,11 @@ interface BoardApi {
   loading: boolean;
   error: string | null;
   projectId: string | null;
+  // Round C (docs/design/team-scoped-boards-design.md §6.1) — `?team=<id>`
+  // scoping, threaded through exactly like `projectId` above. Only the
+  // task-list filter is wired end-to-end here (§4.4); the team switcher UI
+  // and per-team board-config fetch/display are a follow-on (designer).
+  teamId: string | null;
   tasks: Task[];
   users: User[];
   managers: User[];
@@ -88,14 +93,28 @@ interface BoardApi {
 
 const BoardContext = createContext<BoardApi | null>(null);
 
-export function BoardProvider({ children, projectId = null }: { children: ReactNode; projectId?: string | null }) {
+export function BoardProvider({
+  children,
+  projectId = null,
+  teamId = null,
+}: {
+  children: ReactNode;
+  projectId?: string | null;
+  // Round C — mirrors `projectId` exactly (§6.1); `null`/absent behaves
+  // identically to today's unscoped board (no `team_id` filter sent).
+  teamId?: string | null;
+}) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [categoryOptions, setCategoryOptions] = useState<DropdownOption[]>([]);
   const [priorityOptions, setPriorityOptions] = useState<DropdownOption[]>([]);
-  const [boardConfig, setBoardConfig] = useState<BoardConfig>({ swimlane_field: "assignee", updated_at: "" });
+  const [boardConfig, setBoardConfig] = useState<BoardConfig>({
+    swimlane_field: "assignee",
+    updated_at: "",
+    can_manage: false,
+  });
   const [boardLoading, setBoardLoading] = useState(true);
   const [boardError, setBoardError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -104,9 +123,10 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
   const listParams = useCallback(
     () => ({
       ...(projectId ? { projectId } : {}),
+      ...(teamId ? { teamId } : {}),
       ...(managerFilter ? { managerId: managerFilter } : {}),
     }),
-    [projectId, managerFilter]
+    [projectId, teamId, managerFilter]
   );
 
   const refreshTasks = useCallback(async () => {
@@ -201,13 +221,23 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
   }, [loadBoard, session]);
 
   const managers = useMemo(() => users.filter((u) => u.role === "manager"), [users]);
-  const canManageBoardConfig = session.currentUser?.role === "admin";
+  // Round C fix (docs/design/team-scoped-boards-design.md §5.3): read the
+  // server-computed `can_manage` field off the fetched `BoardConfig`
+  // instead of re-deriving permission from the legacy `role` string. The
+  // old `session.currentUser?.role === "admin"` check meant a custom role
+  // granted `manage_board_config` (Round B3) couldn't actually use the
+  // "Group lanes by" control even though the backend would accept the
+  // `PATCH` — `can_manage` is the exact same boolean the backend's own
+  // `PATCH` handler checks before its `403`, so this can never drift from
+  // what the server actually enforces.
+  const canManageBoardConfig = boardConfig.can_manage;
 
   const api_: BoardApi = useMemo(
     () => ({
       loading: boardLoading || session.sessionLoading,
       error: boardError ?? session.sessionError,
       projectId,
+      teamId,
       tasks,
       users,
       managers,
@@ -246,6 +276,7 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
       boardError,
       session.sessionError,
       projectId,
+      teamId,
       tasks,
       users,
       managers,

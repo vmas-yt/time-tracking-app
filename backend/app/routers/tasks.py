@@ -117,6 +117,7 @@ def list_tasks(
     assignee_id: str | None = None,
     status_filter: TaskStatus | None = None,
     manager_id: str | None = None,
+    team_id: str | None = None,
     include_archived: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -125,9 +126,14 @@ def list_tasks(
 
     `manager_id` returns tasks assigned to anyone whose `manager_id` equals
     the given user — the "my team" board a line manager needs, without one
-    round-trip per direct report. Non-admins are additionally restricted to
-    tasks they can view (assignee, creator, or their assignee's manager),
-    matching `services/authz.assert_can_view_task` used elsewhere.
+    round-trip per direct report. `team_id` (Round C, team-scoped boards)
+    returns tasks homed to the given team (`Task.team_id`) — a plain
+    additional filter, precedent-matched to `manager_id` above; it can only
+    narrow the result set, never widen it beyond what the visibility filter
+    below already grants. Non-admins are additionally restricted to tasks
+    they can view (assignee, creator, their assignee's manager, or — Round C
+    — a teammate whose own `team_id` matches the task's), matching
+    `services/authz.can_view_task` used elsewhere.
 
     `include_archived` defaults to excluding archived tasks for everyone; a
     non-admin passing `true` is silently ignored (same pattern as
@@ -143,16 +149,19 @@ def list_tasks(
         query = query.filter(Task.status == status_filter)
     if manager_id:
         query = query.filter(Task.assignee.has(User.manager_id == manager_id))
+    if team_id:
+        query = query.filter(Task.team_id == team_id)
     if not (include_archived and has_permission(current_user, Permission.ARCHIVE_TASKS)):
         query = query.filter(Task.archived_at.is_(None))
     if not has_permission(current_user, Permission.VIEW_ALL_TASKS):
-        query = query.filter(
-            or_(
-                Task.assignee_id == current_user.id,
-                Task.created_by_id == current_user.id,
-                Task.assignee.has(User.manager_id == current_user.id),
-            )
-        )
+        conditions = [
+            Task.assignee_id == current_user.id,
+            Task.created_by_id == current_user.id,
+            Task.assignee.has(User.manager_id == current_user.id),
+        ]
+        if current_user.team_id is not None:   # NEW — Round C, same guard as can_view_task
+            conditions.append(Task.team_id == current_user.team_id)
+        query = query.filter(or_(*conditions))
     tasks = query.order_by(Task.status, Task.position).all()
     return [_serialize(db, t) for t in tasks]
 

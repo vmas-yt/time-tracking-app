@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Permission, Team, User
-from app.schemas import TeamCreate, TeamRead, TeamUpdate
+from app.models import BoardConfig, Permission, SwimlaneField, Team, TeamBoardConfig, User
+from app.schemas import TeamBoardConfigRead, TeamBoardConfigUpdate, TeamCreate, TeamRead, TeamUpdate
 from app.services.authz import assert_has_permission, has_permission
 from app.services.teams import sync_team_manager, validate_department_id, validate_team_manager_id
 
@@ -135,3 +135,81 @@ def delete_team(
     db.commit()
     db.refresh(team)
     return team
+
+
+def _get_team_or_404(db: Session, team_id: str) -> Team:
+    team = db.get(Team, team_id)
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return team
+
+
+def _get_or_create_team_board_config(db: Session, team_id: str) -> TeamBoardConfig:
+    """Lazy-create-if-missing, identical idiom to
+    `routers/admin.py::get_board_config`'s handling of the `id="default"`
+    singleton. Per db-admin's recommendation (design doc §7.4) a
+    newly-created row defaults `swimlane_field` to the *current* global
+    `board_config.swimlane_field` value rather than a hardcoded
+    `SwimlaneField.ASSIGNEE` -- consistent with what
+    `_migrate_team_board_config_backfill` already does for every
+    pre-existing team, so a team created between backfill runs and its
+    first board view doesn't land on a different default than its
+    siblings."""
+    config = db.get(TeamBoardConfig, team_id)
+    if not config:
+        global_config = db.get(BoardConfig, "default")
+        default_field = global_config.swimlane_field if global_config else SwimlaneField.ASSIGNEE
+        config = TeamBoardConfig(team_id=team_id, swimlane_field=default_field)
+        db.add(config)
+        db.commit()
+        db.refresh(config)
+    return config
+
+
+@router.get("/{team_id}/board-config", response_model=TeamBoardConfigRead)
+def get_team_board_config(
+    team_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Any authenticated user may read this — mirrors `GET
+    /admin/board-config`'s open-read and `GET /teams`'s open-read; a team's
+    swim-lane grouping/board name is not sensitive (Round C, design doc
+    §4.1)."""
+    _get_team_or_404(db, team_id)
+    config = _get_or_create_team_board_config(db, team_id)
+    data = TeamBoardConfigRead.model_validate(config)
+    data.can_manage = has_permission(current_user, Permission.MANAGE_BOARD_CONFIG)
+    return data
+
+
+@router.patch("/{team_id}/board-config", response_model=TeamBoardConfigRead)
+def update_team_board_config(
+    team_id: str,
+    update: TeamBoardConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Gated by the same global `MANAGE_BOARD_CONFIG` permission as `PATCH
+    /admin/board-config` — admin-only, generalized as-is, deliberately no
+    team-manager carve-out (design doc §5.2, finalized)."""
+    assert_has_permission(current_user, Permission.MANAGE_BOARD_CONFIG)
+    _get_team_or_404(db, team_id)
+    config = _get_or_create_team_board_config(db, team_id)
+
+    updates = update.model_dump(exclude_unset=True)
+    if "swimlane_field" in updates and updates["swimlane_field"] is None:
+        # Unlike board_name (nullable, explicit null is a legitimate "clear
+        # back to the Team.name fallback" per §4.2), swimlane_field is a
+        # NOT NULL column (same as the existing global BoardConfigUpdate) —
+        # there is no "clear" semantics for it. An omitted key leaves it
+        # unchanged; an explicit null is a client error, not a valid value.
+        raise HTTPException(status_code=422, detail="swimlane_field cannot be null")
+    for field, value in updates.items():
+        setattr(config, field, value)
+
+    db.commit()
+    db.refresh(config)
+    data = TeamBoardConfigRead.model_validate(config)
+    data.can_manage = True   # caller just passed the assert_has_permission check above
+    return data

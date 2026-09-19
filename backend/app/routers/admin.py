@@ -108,7 +108,9 @@ def get_board_config(db: Session = Depends(get_db), current_user: User = Depends
         db.add(config)
         db.commit()
         db.refresh(config)
-    return config
+    data = BoardConfigRead.model_validate(config)
+    data.can_manage = has_permission(current_user, Permission.MANAGE_BOARD_CONFIG)
+    return data
 
 
 @router.patch("/board-config", response_model=BoardConfigRead)
@@ -125,7 +127,9 @@ def update_board_config(
     config.swimlane_field = update.swimlane_field
     db.commit()
     db.refresh(config)
-    return config
+    data = BoardConfigRead.model_validate(config)
+    data.can_manage = True   # caller just passed the assert_has_permission check above
+    return data
 
 
 @router.get("/manual-entry-settings", response_model=ManualEntrySettingsRead)

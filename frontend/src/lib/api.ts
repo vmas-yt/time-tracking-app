@@ -22,6 +22,7 @@ import type {
   TaskStatus,
   TaskType,
   Team,
+  TeamBoardConfig,
   ThroughputBucket,
   TimeEntry,
   User,
@@ -199,6 +200,10 @@ export const api = {
     assigneeId?: string;
     status?: TaskStatus;
     managerId?: string;
+    // Round C (docs/design/team-scoped-boards-design.md §4.4) — plain
+    // additional filter, same shape/precedent as `managerId`/`projectId`
+    // above (`GET /tasks?team_id=`).
+    teamId?: string;
     includeArchived?: boolean;
   }) => {
     const query = new URLSearchParams();
@@ -206,6 +211,7 @@ export const api = {
     if (params?.assigneeId) query.set("assignee_id", params.assigneeId);
     if (params?.status) query.set("status_filter", params.status);
     if (params?.managerId) query.set("manager_id", params.managerId);
+    if (params?.teamId) query.set("team_id", params.teamId);
     if (params?.includeArchived) query.set("include_archived", "true");
     const qs = query.toString();
     return request<Task[]>(`/tasks${qs ? `?${qs}` : ""}`);
@@ -294,6 +300,18 @@ export const api = {
     request<BoardConfig>("/admin/board-config", {
       method: "PATCH",
       body: JSON.stringify({ swimlane_field }),
+    }),
+  // Round C (docs/design/team-scoped-boards-design.md §4.1/§4.2) — the
+  // per-team analogue of `getBoardConfig`/`updateBoardConfig` above. Open-read
+  // for any authenticated user (mirrors the global endpoint's own open-read);
+  // `PATCH` is a partial update (both fields optional) — an explicit
+  // `board_name: null` clears back to the `Team.name` fallback, an omitted
+  // key leaves it unchanged.
+  getTeamBoardConfig: (teamId: string) => request<TeamBoardConfig>(`/teams/${teamId}/board-config`),
+  updateTeamBoardConfig: (teamId: string, input: { board_name?: string | null; swimlane_field?: SwimlaneField }) =>
+    request<TeamBoardConfig>(`/teams/${teamId}/board-config`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
     }),
   // Manual/retroactive time-logging policy — how many days back a manual
   // entry's start/completion date may be backdated. Readable by any
