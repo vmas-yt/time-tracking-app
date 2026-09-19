@@ -4,9 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Team, User
+from app.models import Permission, Team, User
 from app.schemas import TeamCreate, TeamRead, TeamUpdate
-from app.services.authz import assert_admin, role_key
+from app.services.authz import assert_has_permission, has_permission
 from app.services.teams import sync_team_manager, validate_department_id, validate_team_manager_id
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -27,7 +27,7 @@ def list_teams(
     query = db.query(Team)
     if department_id:
         query = query.filter(Team.department_id == department_id)
-    if not (include_inactive and role_key(current_user) == "admin"):
+    if not (include_inactive and has_permission(current_user, Permission.MANAGE_TEAMS)):
         query = query.filter(Team.is_active.is_(True))
     return query.all()
 
@@ -38,7 +38,7 @@ def create_team(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_TEAMS)
     validate_department_id(db, team_in.department_id)
     validate_team_manager_id(db, team_in.manager_id)
 
@@ -77,7 +77,7 @@ def update_team(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_TEAMS)
     team = db.get(Team, team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
@@ -117,7 +117,7 @@ def delete_team(
     """Despite the verb, soft-deactivates rather than hard-deleting — same
     rationale as `DELETE /departments/{id}`. 409 if any active User still
     has this team_id; those must be reassigned/deactivated first."""
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_TEAMS)
     team = db.get(Team, team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")

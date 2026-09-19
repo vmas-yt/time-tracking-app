@@ -12,6 +12,7 @@ from app.routers import (
     notifications,
     projects,
     reports,
+    roles,
     tasks,
     teams,
     time_entries,
@@ -48,6 +49,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(roles.router)
 app.include_router(departments.router)
 app.include_router(teams.router)
 app.include_router(projects.router)

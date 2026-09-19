@@ -3,9 +3,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Project, Task, User
+from app.models import Permission, Project, Task, User
 from app.schemas import ProjectCreate, ProjectRead, ProjectUpdate
-from app.services.authz import assert_admin
+from app.services.authz import assert_has_permission
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -21,7 +21,7 @@ def create_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_PROJECTS)
     project = Project(**project_in.model_dump())
     db.add(project)
     db.commit()
@@ -46,7 +46,7 @@ def update_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_PROJECTS)
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -64,7 +64,7 @@ def update_project(
 def delete_project(
     project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_PROJECTS)
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")

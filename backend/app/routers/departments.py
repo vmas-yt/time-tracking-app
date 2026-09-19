@@ -4,9 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Department, Team, User
+from app.models import Department, Permission, Team, User
 from app.schemas import DepartmentCreate, DepartmentRead, DepartmentUpdate
-from app.services.authz import assert_admin, role_key
+from app.services.authz import assert_has_permission, has_permission
 
 router = APIRouter(prefix="/departments", tags=["departments"])
 
@@ -24,7 +24,7 @@ def list_departments(
     non-admin passing it has it silently ignored — same precedent as
     `GET /users?include_inactive`."""
     query = db.query(Department)
-    if not (include_inactive and role_key(current_user) == "admin"):
+    if not (include_inactive and has_permission(current_user, Permission.MANAGE_DEPARTMENTS)):
         query = query.filter(Department.is_active.is_(True))
     return query.all()
 
@@ -35,7 +35,7 @@ def create_department(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_DEPARTMENTS)
     if db.query(Department).filter(Department.name == department_in.name).first():
         raise HTTPException(status_code=400, detail=_DUPLICATE_NAME_DETAIL)
 
@@ -57,7 +57,7 @@ def update_department(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_DEPARTMENTS)
     department = db.get(Department, department_id)
     if not department:
         raise HTTPException(status_code=404, detail="Department not found")
@@ -94,7 +94,7 @@ def delete_department(
     `DELETE /admin/dropdown-options/{id}`. 409 if any active Team still
     lives under this department; those must be reassigned/deactivated
     first — same shape as `DELETE /projects/{id}`'s has-tasks guard."""
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_DEPARTMENTS)
     department = db.get(Department, department_id)
     if not department:
         raise HTTPException(status_code=404, detail="Department not found")

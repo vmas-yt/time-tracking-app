@@ -7,14 +7,14 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Task, TaskStatus, TaskStatusEvent, User
+from app.models import Permission, Task, TaskStatus, TaskStatusEvent, User
 from app.schemas import (
     CumulativeFlowPoint,
     CycleTimePoint,
     LeadTimePoint,
     ThroughputBucket,
 )
-from app.services.authz import role_key
+from app.services.authz import has_permission
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -25,7 +25,7 @@ def _scope_to_visible_tasks(query, current_user: User):
     assigned to their direct reports; admin sees everything. Copies the
     existing `GET /tasks` filter and the `notifications.py::reminder_candidates`
     direct-reports-only precedent — no recursive manager-chain traversal."""
-    if role_key(current_user) == "admin":
+    if has_permission(current_user, Permission.VIEW_REPORTS_ALL):
         return query
     return query.filter(
         or_(

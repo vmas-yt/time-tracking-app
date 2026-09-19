@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.security import hash_password, verify_password
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import Team, User
+from app.models import Team, User, UserRole
 from app.schemas import (
     PasswordChangeRequest,
     PasswordResetRequest,
@@ -17,7 +17,7 @@ from app.services.teams import sync_team_manager, validate_team_id
 from app.services.users import (
     deactivate_user,
     is_last_active_admin,
-    role_id_for_builtin_role,
+    resolve_role_assignment,
     validate_manager_id,
     would_strip_last_active_admin,
 )
@@ -25,9 +25,29 @@ from app.services.users import (
 router = APIRouter(prefix="/users", tags=["users"])
 
 
+def _role_display_name(user: User) -> str:
+    """RBAC Round B3 (§4.1): `UserRead.role_name` — resolved display name,
+    works uniformly for a builtin or a custom role. Mirrors `role_key`'s own
+    `role_id`-first, legacy-`role`-fallback resolution order (see
+    `services/authz.py::role_key`'s docstring for why that fallback exists
+    at all — a user constructed directly via the ORM, bypassing both
+    `POST /users` and the migration backfill, as several test fixtures do)."""
+    if user.role_id is not None and user.assigned_role is not None:
+        return user.assigned_role.name
+    if user.role is not None:
+        return user.role.value.capitalize()
+    return ""
+
+
+def _serialize(user: User) -> UserRead:
+    data = UserRead.model_validate(user)
+    data.role_name = _role_display_name(user)
+    return data
+
+
 @router.get("/me", response_model=UserRead)
 def read_current_user(current_user: User = Depends(get_current_user)):
-    return current_user
+    return _serialize(current_user)
 
 
 @router.get("", response_model=list[UserRead])
@@ -42,7 +62,7 @@ def list_users(
     query = db.query(User)
     if not (include_inactive and role_key(current_user) == "admin"):
         query = query.filter(User.is_active.is_(True))
-    return query.all()
+    return [_serialize(u) for u in query.all()]
 
 
 @router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -57,12 +77,14 @@ def create_user(
     validate_manager_id(db, user_in.manager_id, target_user_id=None)
     validate_team_id(db, user_in.team_id)
 
+    resolved_role, resolved_role_id = resolve_role_assignment(db, user_in.role, user_in.role_id)
+
     user = User(
         email=user_in.email,
         full_name=user_in.full_name,
         hashed_password=hash_password(user_in.password),
-        role=user_in.role,
-        role_id=role_id_for_builtin_role(db, user_in.role),
+        role=resolved_role,
+        role_id=resolved_role_id,
         manager_id=user_in.manager_id,
         team_id=user_in.team_id,
         is_active=True,
@@ -79,7 +101,23 @@ def create_user(
         sync_team_manager(db, team)
     db.commit()
     db.refresh(user)
-    return user
+    if user.role != resolved_role:
+        # SQLAlchemy's Python-side column default (`User.role`'s
+        # `default=UserRole.EMPLOYEE`) fires on INSERT whenever the column's
+        # value is `None` at flush time -- including when a caller *deliberately*
+        # passes `role=None` in the constructor, not just when the field is left
+        # unset entirely. RBAC Round B3 is the first caller that ever needs the
+        # former (a brand-new user assigned a genuinely custom `role_id` must
+        # land with `role` truly NULL, §4.2/§4.4) -- the initial INSERT above
+        # silently resurrects `UserRole.EMPLOYEE` instead. A second, explicit
+        # UPDATE (which this default does *not* apply to -- verified directly)
+        # corrects it. This is a no-op extra round-trip for every other caller,
+        # since `resolved_role` already matches what actually got persisted in
+        # every case except this one.
+        user.role = resolved_role
+        db.commit()
+        db.refresh(user)
+    return _serialize(user)
 
 
 @router.patch("/me/password", status_code=status.HTTP_204_NO_CONTENT)
@@ -141,20 +179,44 @@ def update_user(
             detail="Cannot deactivate the only remaining admin account.",
         )
 
-    # Same "check before applying anything" rule as the deactivation guard
-    # above, and the same floor: the only row satisfying `assert_admin`'s
+    # RBAC Round B3 (§4.2/§4.3): resolve `role`/`role_id` together, before
+    # applying anything else below — same "check before applying" rule as
+    # the deactivation guard above. A non-null `role` or a non-null `role_id`
+    # resolves through the new role-assignment table; an explicit null on
+    # *either* field with the other absent (`{"role": null}` or
+    # `{"role_id": null}`) is the pre-existing Round B2 null-out path,
+    # preserved byte-for-byte (both columns go to None) rather than being
+    # routed through `resolve_role_assignment`'s "neither given" branch,
+    # which is create-only (defaults to Employee) and would otherwise make
+    # `{"role_id": null}` silently promote the user to Employee instead of
+    # nulling out the assignment like `{"role": null}` already does.
+    role_in_updates = "role" in updates
+    role_id_in_updates = "role_id" in updates
+    role_being_changed = role_in_updates or role_id_in_updates
+    resolved_role: UserRole | None = None
+    resolved_role_id: str | None = None
+    explicit_role = role_in_updates and updates.get("role") is not None
+    explicit_role_id = role_id_in_updates and updates.get("role_id") is not None
+    if explicit_role or explicit_role_id:
+        resolved_role, resolved_role_id = resolve_role_assignment(
+            db, updates.get("role"), updates.get("role_id")
+        )
+
+    # Same floor as before: the only row satisfying `assert_admin`'s
     # `role == ADMIN` check can't be reassigned away from it (including to
     # `None`, now representable at all since `users.role` became nullable —
     # see services/migrations.py::_migrate_users_role_nullable) while it's
-    # the system's sole active admin. `"role" in updates` (not `.get(...)`)
-    # so an explicit `{"role": null}` is caught the same as any other value
-    # — a request that simply doesn't mention `role` at all must never hit
-    # this branch.
-    if "role" in updates and would_strip_last_active_admin(db, user, updates["role"]):
+    # the system's sole active admin. Checked against the *resolved* role
+    # (not the raw request field) so assigning a custom `role_id` — which
+    # resolves to `role=None` — is correctly treated as "would strip admin"
+    # too, exactly like an explicit `role: null` already was.
+    if role_being_changed and would_strip_last_active_admin(db, user, resolved_role):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cannot change the role of the only remaining admin account.",
         )
+    updates.pop("role", None)
+    updates.pop("role_id", None)
 
     if "email" in updates and updates["email"] != user.email:
         if db.query(User).filter(User.email == updates["email"], User.id != user_id).first():
@@ -168,15 +230,12 @@ def update_user(
     for field, value in updates.items():
         setattr(user, field, value)
 
-    if "role" in updates:
-        # RBAC Round B2's reachable sync direction (role -> role_id, see the
-        # note on User.role_id in models.py): `role` is currently the only
-        # API-facing field that ever changes which role a user holds, so
-        # this keeps `role_id` from going stale relative to it. An explicit
-        # `{"role": null}` (newly representable now that `role` is
-        # nullable) has no matching builtin row, so `role_id` follows it to
-        # null too, rather than being left pointing at a now-wrong role.
-        user.role_id = role_id_for_builtin_role(db, updates["role"]) if updates["role"] is not None else None
+    if role_being_changed:
+        # RBAC Round B3 (§4.2): applies the pair resolved above together, so
+        # `role`/`role_id` never go out of sync with each other — whichever
+        # of the two the request actually sent.
+        user.role = resolved_role
+        user.role_id = resolved_role_id
 
     if "team_id" in updates and updates["team_id"] is not None:
         # Same rationale as create_user: sync immediately whenever team_id
@@ -210,7 +269,7 @@ def update_user(
 
     db.commit()
     db.refresh(user)
-    return user
+    return _serialize(user)
 
 
 @router.delete("/{user_id}", response_model=UserRead)
@@ -225,4 +284,4 @@ def delete_user(
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return deactivate_user(db, user, current_user)
+    return _serialize(deactivate_user(db, user, current_user))

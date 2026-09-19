@@ -1,14 +1,14 @@
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import TimeEntry, User
+from app.models import Permission, TimeEntry, User, UserRole
 from app.schemas import ReminderCandidate
-from app.services.authz import role_key
+from app.services.authz import has_permission
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -27,12 +27,21 @@ def reminder_candidates(
     actual delivery channel (email/Slack) is a follow-up that needs
     outbound-notification infrastructure this scaffold doesn't have.
     """
-    if role_key(current_user) == "admin":
+    # §1.6: `view_all_reminders` + a structural (manager_id-based) fix for
+    # "sees direct reports' reminders" -- previously coupled to holding the
+    # literal builtin manager role (`role_key(...) == "manager"`), which
+    # would have silently regressed for any custom-role holder (e.g. "Team
+    # Lead") who genuinely has direct reports via `manager_id` once custom
+    # roles are real. Behavior-preserving for every existing
+    # employee/manager/admin: a manager's direct-reports scope is now
+    # derived structurally instead of by role key, which is the same set for
+    # every manager today.
+    if current_user.role == UserRole.ADMIN or has_permission(current_user, Permission.VIEW_ALL_REMINDERS):
         scope = db.query(User)
-    elif role_key(current_user) == "manager":
-        scope = db.query(User).filter(User.manager_id == current_user.id)
     else:
-        scope = db.query(User).filter(User.id == current_user.id)
+        scope = db.query(User).filter(
+            or_(User.id == current_user.id, User.manager_id == current_user.id)
+        )
 
     users = scope.all()
     last_logged = dict(

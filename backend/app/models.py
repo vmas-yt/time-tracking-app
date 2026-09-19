@@ -101,6 +101,37 @@ class DropdownOptionScope(str, enum.Enum):
     CUSTOM_FIELD = "custom_field"
 
 
+class Permission(str, enum.Enum):
+    """RBAC Round B3: the full grantable permission catalog -- 12 keys,
+    derived from the actual router audit in
+    docs/design/custom-roles-design.md §1.3. Purely an application-layer
+    validation/authoring aid (Pydantic request-body validation in
+    `RolePermissionsUpdate`, and the literal keys `has_permission()` checks
+    against in `services/authz.py`) -- **not** a DB column type.
+    `RolePermission.permission_key` stays the plain, unvalidated-at-DB-level
+    `String` column its own docstring above already commits to, so adding or
+    renaming a key here is never a schema migration.
+
+    Deliberately excludes `manage_roles_permissions` and `manage_users` --
+    see §1.1/§1.5 of the design doc for why those two stay floor-only
+    (`assert_admin`) forever and are never representable as a grantable,
+    storable permission at all.
+    """
+
+    MANAGE_DEPARTMENTS = "manage_departments"
+    MANAGE_TEAMS = "manage_teams"
+    MANAGE_PROJECTS = "manage_projects"
+    MANAGE_CUSTOM_FIELDS = "manage_custom_fields"
+    MANAGE_DROPDOWN_OPTIONS = "manage_dropdown_options"
+    MANAGE_BOARD_CONFIG = "manage_board_config"
+    MANAGE_MANUAL_ENTRY_SETTINGS = "manage_manual_entry_settings"
+    ARCHIVE_TASKS = "archive_tasks"
+    VIEW_ALL_TASKS = "view_all_tasks"
+    VIEW_ALL_TIME_ENTRIES = "view_all_time_entries"
+    VIEW_REPORTS_ALL = "view_reports_all"
+    VIEW_ALL_REMINDERS = "view_all_reminders"
+
+
 class Role(Base):
     """RBAC Round B1 (additive schema only). Exactly 3 rows are seeded as
     builtins by services/migrations.py::_migrate_rbac_schema_backfill --

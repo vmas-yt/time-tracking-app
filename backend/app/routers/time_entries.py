@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import AuditAction, Task, TaskStatus, TimeEntry, TimerStatus, User
+from app.models import AuditAction, Permission, Task, TaskStatus, TimeEntry, TimerStatus, User
 from app.schemas import TimeEntryRead
-from app.services.authz import assert_can_edit_task, role_key
+from app.services.authz import assert_can_control_time_entry, has_permission
 from app.services.tasks import record_audit, record_status_event
 from app.services.timer import (
     elapsed_seconds,
@@ -31,15 +31,22 @@ def _serialize(entry: TimeEntry) -> TimeEntryRead:
 
 def _get_owned_entry(db: Session, entry_id: str, current_user: User) -> TimeEntry:
     """Non-admins may only reach their own entries (404, not 403, to avoid
-    revealing existence). Admins may fetch any entry by id — the operational
-    override for pause/resume/stop (design doc §9.2); `start` doesn't call
-    this at all, see `start_timer`, since it's tightened to assignee-only."""
+    revealing existence). Admins, and any custom role holding
+    `view_all_time_entries`, may fetch any entry by id — the operational
+    override for pause/resume/stop (RBAC Round B3, design doc §1.4.3);
+    `start` doesn't call this at all, see `start_timer`, since it's
+    tightened to assignee-only. `has_permission()` already returns True
+    unconditionally for a floor admin, so the old explicit
+    `role_key(...) == "admin"` branch collapses into this single check with
+    no loss of coverage."""
     entry = db.get(TimeEntry, entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Time entry not found")
-    if role_key(current_user) != "admin" and entry.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Time entry not found")
-    return entry
+    if entry.user_id == current_user.id:
+        return entry
+    if has_permission(current_user, Permission.VIEW_ALL_TIME_ENTRIES):
+        return entry
+    raise HTTPException(status_code=404, detail="Time entry not found")
 
 
 @router.get("", response_model=list[TimeEntryRead])
@@ -61,11 +68,11 @@ def list_time_entries(
         target = db.get(User, user_id)
         is_self = user_id == current_user.id
         is_their_manager = target is not None and target.manager_id == current_user.id
-        if not (is_self or is_their_manager or role_key(current_user) == "admin"):
+        if not (is_self or is_their_manager or has_permission(current_user, Permission.VIEW_ALL_TIME_ENTRIES)):
             raise HTTPException(status_code=403, detail="Not authorized to view this user's time entries")
         query = db.query(TimeEntry).filter(TimeEntry.user_id == user_id)
     elif manager_id:
-        if not (manager_id == current_user.id or role_key(current_user) == "admin"):
+        if not (manager_id == current_user.id or has_permission(current_user, Permission.VIEW_ALL_TIME_ENTRIES)):
             raise HTTPException(status_code=403, detail="Not authorized to view this team's time entries")
         query = db.query(TimeEntry).join(User, TimeEntry.user_id == User.id).filter(
             User.manager_id == manager_id
@@ -148,7 +155,7 @@ def pause_timer(
     entry_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     entry = _get_owned_entry(db, entry_id, current_user)
-    assert_can_edit_task(current_user, entry.task)
+    assert_can_control_time_entry(current_user, entry)
     if entry.status != TimerStatus.RUNNING:
         raise HTTPException(status_code=409, detail=f"Cannot pause a timer in '{entry.status.value}' state")
     pause_entry(entry)
@@ -163,7 +170,7 @@ def resume_timer(
     entry_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     entry = _get_owned_entry(db, entry_id, current_user)
-    assert_can_edit_task(current_user, entry.task)
+    assert_can_control_time_entry(current_user, entry)
     if entry.status != TimerStatus.PAUSED:
         raise HTTPException(status_code=409, detail=f"Cannot resume a timer in '{entry.status.value}' state")
     # Concurrency check is scoped to the entry's owner, not the caller — an
@@ -200,7 +207,7 @@ def stop_timer(
     entry_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     entry = _get_owned_entry(db, entry_id, current_user)
-    assert_can_edit_task(current_user, entry.task)
+    assert_can_control_time_entry(current_user, entry)
     if entry.status == TimerStatus.STOPPED:
         raise HTTPException(status_code=409, detail="Timer is already stopped")
 

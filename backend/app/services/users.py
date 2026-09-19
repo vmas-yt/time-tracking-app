@@ -55,6 +55,62 @@ def validate_assignee_active(db: Session, assignee_id: str | None) -> None:
         )
 
 
+def validate_role_id(db: Session, role_id: str) -> Role:
+    """`400` if `role_id` doesn't reference an existing `Role` row (§4.2).
+    Returns the row so callers that already need it (`resolve_role_assignment`)
+    don't have to re-fetch."""
+    role = db.get(Role, role_id)
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="role_id does not reference an existing role",
+        )
+    return role
+
+
+def resolve_role_assignment(
+    db: Session, role: UserRole | None, role_id: str | None
+) -> tuple[UserRole | None, str | None]:
+    """RBAC Round B3 (§4.2): the shared `role`/`role_id` resolution rule for
+    `POST /users` and `PATCH /users/{id}`, replacing direct
+    `role_id_for_builtin_role` call sites. At most one of `role`/`role_id`
+    may be given — `400` if both are non-null. Returns the resolved
+    `(role, role_id)` pair to assign, keeping the two columns in sync exactly
+    as `User.role_id`'s own docstring already promises.
+
+    | Input                                          | Resolution |
+    |-------------------------------------------------|------------|
+    | Neither given                                   | `(UserRole.EMPLOYEE, <builtin employee row>.id)` |
+    | `role` given                                    | `(role, role_id_for_builtin_role(db, role))` |
+    | `role_id` given, resolves to a builtin row       | `(UserRole(role.key), role_id)` |
+    | `role_id` given, resolves to a custom row        | `(None, role_id)` |
+    | `role_id` given, doesn't resolve to any row      | `400` |
+    | Both given                                       | `400` |
+
+    Note: "neither given" only applies to `POST /users` (`create_user`
+    always has a concrete `role` — `UserCreate.role` defaults there); a
+    `PATCH /users/{id}` that mentions neither field simply doesn't call this
+    at all (see `update_user`), since an omitted field there must leave the
+    user's existing role untouched, not silently reset it to Employee.
+    """
+    if role is not None and role_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="role and role_id are mutually exclusive",
+        )
+
+    if role_id is not None:
+        matched_role = validate_role_id(db, role_id)
+        if matched_role.is_builtin:
+            return UserRole(matched_role.key), role_id
+        return None, role_id
+
+    if role is not None:
+        return role, role_id_for_builtin_role(db, role)
+
+    return UserRole.EMPLOYEE, role_id_for_builtin_role(db, UserRole.EMPLOYEE)
+
+
 def role_id_for_builtin_role(db: Session, role: UserRole) -> str | None:
     """The `roles.id` of the builtin `Role` row matching the legacy `role`
     enum value -- RBAC Round B2's role -> role_id sync direction (see the

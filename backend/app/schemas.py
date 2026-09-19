@@ -7,6 +7,7 @@ from app.models import (
     AuditAction,
     CustomFieldType,
     DropdownOptionScope,
+    Permission,
     SwimlaneField,
     TaskStatus,
     TaskType,
@@ -45,7 +46,14 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    role: UserRole = UserRole.EMPLOYEE
+    # RBAC Round B3 (§4.1): CHANGED from `UserRole = UserRole.EMPLOYEE` — a
+    # plain, no-role-mentioned create now defaults through
+    # `services/users.py::resolve_role_assignment`'s "neither given" branch
+    # (still Employee) rather than the Pydantic field default, so the same
+    # resolution logic covers both this omitted-field case and every other
+    # role/role_id combination in one place.
+    role: UserRole | None = None
+    role_id: str | None = None  # NEW — custom-role picker (§5.2)
     manager_id: str | None = None
     team_id: str | None = None
     password: str = Field(min_length=8)
@@ -53,7 +61,15 @@ class UserCreate(UserBase):
 
 class UserRead(UserBase, UTCModel):
     id: str
-    role: UserRole
+    # RBAC Round B3 (§4.1/§4.4): CHANGED from `UserRole` (non-optional) — a
+    # user holding a genuinely custom role has `role` genuinely NULL in the
+    # DB (§4.2); serializing that user through the old non-optional type
+    # raised a Pydantic validation error (500). This was a pre-existing,
+    # latent bug since Round B2 made the column nullable, never triggered
+    # only because nothing ever actually assigned a custom role until now.
+    role: UserRole | None
+    role_id: str | None = None  # NEW
+    role_name: str = ""  # NEW — resolved display name, set in routers/users.py::_serialize
     manager_id: str | None
     team_id: str | None = None
     is_active: bool
@@ -65,6 +81,7 @@ class UserUpdate(BaseModel):
     full_name: str | None = None
     email: EmailStr | None = None
     role: UserRole | None = None
+    role_id: str | None = None  # NEW — see resolve_role_assignment (§4.2)
     manager_id: str | None = None
     team_id: str | None = None
     is_active: bool | None = None
@@ -82,6 +99,54 @@ class PasswordChangeRequest(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+# ---- Roles & permissions (RBAC Round B3) -------------------------------------
+
+
+class RoleCreate(BaseModel):
+    name: str = Field(min_length=1)
+
+
+class RoleUpdate(BaseModel):
+    """Rename only (§2.3) — `key`/`is_builtin` are immutable after creation."""
+
+    name: str = Field(min_length=1)
+
+
+class RoleRead(UTCModel):
+    id: str
+    key: str
+    name: str
+    is_builtin: bool
+    permission_keys: list[str] = []
+    created_at: UTCDatetime
+
+
+class RolePermissionsUpdate(BaseModel):
+    """`list[Permission]` (not `list[str]`) so an unknown key — including
+    `"manage_roles_permissions"`, which is deliberately not a member of the
+    enum (§1.1) — is rejected by FastAPI's own validation as a `422`, no
+    hand-written check needed (§2.4)."""
+
+    permission_keys: list[Permission]
+
+
+class RoleAuditActor(UTCModel):
+    id: str
+    full_name: str
+    email: str
+
+
+class RolePermissionAuditEntryRead(BaseModel):
+    """One folded batch (§2.7) — every `RolePermissionAuditEntry` row sharing
+    a `batch_id`, grouped server-side into `added`/`removed` lists."""
+
+    batch_id: str
+    occurred_at: UTCDatetime
+    actor: RoleAuditActor
+    added: list[str] = []
+    removed: list[str] = []
 
 
 # ---- Departments & Teams ----------------------------------------------------

@@ -1,6 +1,6 @@
 from fastapi import HTTPException, status
 
-from app.models import Task, User, UserRole
+from app.models import Permission, Task, TimeEntry, User, UserRole
 
 
 def role_key(user: User) -> str:
@@ -31,12 +31,36 @@ def role_key(user: User) -> str:
     return user.role.value
 
 
+def has_permission(user: User, permission: Permission) -> bool:
+    """Non-floor permission check for a granted custom-role capability.
+
+    Mirrors assert_admin's floor check for the "admin has everything"
+    shortcut (checks the legacy `user.role` column directly, not
+    `role_key()`) so this always agrees with the one guarantee that must
+    never depend on the new role/permission system being correct. Beyond
+    that shortcut, this is purely additive: it can only grant capability a
+    custom role was explicitly given via `PUT /roles/{id}/permissions`
+    (§2.4), never take anything away from an existing hardcoded check.
+
+    Builtin non-admin roles (employee/manager) always return False here for
+    every key, since they can never hold RolePermission rows (§2.4) — their
+    behavior is unaffected by this function's existence.
+    """
+    if user.role == UserRole.ADMIN:
+        return True
+    if user.role_id is None or user.assigned_role is None:
+        return False
+    return any(p.permission_key == permission.value for p in user.assigned_role.permissions)
+
+
 def can_view_task(current_user: User, task: Task) -> bool:
     if current_user.role == UserRole.ADMIN:
         return True
     if current_user.id in (task.assignee_id, task.created_by_id):
         return True
     if task.assignee and task.assignee.manager_id == current_user.id:
+        return True
+    if has_permission(current_user, Permission.VIEW_ALL_TASKS):   # NEW — appended last
         return True
     return False
 
@@ -63,6 +87,39 @@ def assert_can_edit_task(current_user: User, task: Task) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to edit this task")
 
 
+def can_control_time_entry(current_user: User, entry: TimeEntry) -> bool:
+    """Whether current_user may pause/resume/stop this time entry.
+
+    The ordinary case is identical to can_edit_task on the entry's task
+    (floor admin, assignee, or creator) -- checked first, unconditionally,
+    exactly as today. The only addition is a narrow, time-entry-scoped
+    operational override: a role holding view_all_time_entries may also
+    pause/resume/stop *any* entry, without that permission leaking into
+    general task edit/delete rights, which stay gated by the untouched
+    can_edit_task above.
+    """
+    if can_edit_task(current_user, entry.task):
+        return True
+    return has_permission(current_user, Permission.VIEW_ALL_TIME_ENTRIES)
+
+
+def assert_can_control_time_entry(current_user: User, entry: TimeEntry) -> None:
+    if not can_control_time_entry(current_user, entry):
+        raise HTTPException(status_code=403, detail="Not authorized to control this time entry")
+
+
 def assert_admin(current_user: User) -> None:
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
+
+def assert_has_permission(current_user: User, permission: Permission) -> None:
+    """The `has_permission()` equivalent of `assert_admin` -- raises the same
+    `403` shape for every call site converted per the design doc's §3.1
+    table (`departments.py`/`teams.py`/`projects.py`/`admin.py`/`tasks.py`'s
+    archive endpoints). Not itself a floor function: `has_permission` already
+    returns `True` unconditionally for a real admin, so this is a strict
+    superset of what the `assert_admin` call it replaces used to allow.
+    """
+    if not has_permission(current_user, permission):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to perform this action")

@@ -9,6 +9,7 @@ from app.deps import get_current_user
 from app.models import (
     AuditAction,
     DropdownOptionScope,
+    Permission,
     Task,
     TaskAuditEntry,
     TaskComment,
@@ -28,7 +29,7 @@ from app.schemas import (
     TaskRead,
     TaskUpdate,
 )
-from app.services.authz import assert_admin, assert_can_edit_task, assert_can_view_task, role_key
+from app.services.authz import assert_can_edit_task, assert_can_view_task, assert_has_permission, has_permission
 from app.services.tasks import (
     apply_custom_values,
     change_status,
@@ -142,9 +143,9 @@ def list_tasks(
         query = query.filter(Task.status == status_filter)
     if manager_id:
         query = query.filter(Task.assignee.has(User.manager_id == manager_id))
-    if not (include_archived and role_key(current_user) == "admin"):
+    if not (include_archived and has_permission(current_user, Permission.ARCHIVE_TASKS)):
         query = query.filter(Task.archived_at.is_(None))
-    if role_key(current_user) != "admin":
+    if not has_permission(current_user, Permission.VIEW_ALL_TASKS):
         query = query.filter(
             or_(
                 Task.assignee_id == current_user.id,
@@ -367,7 +368,7 @@ def archive_task(
 ):
     """Admin-only, orthogonal to `status` (§5.2). Idempotent — archiving an
     already-archived task just returns it unchanged, no error."""
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.ARCHIVE_TASKS)
     task = _get_task_or_404(db, task_id)
     if task.archived_at is None:
         task.archived_at = datetime.utcnow()
@@ -382,7 +383,7 @@ def unarchive_task(
     task_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     """Symmetric to `archive_task` — admin-only, idempotent."""
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.ARCHIVE_TASKS)
     task = _get_task_or_404(db, task_id)
     if task.archived_at is not None:
         task.archived_at = None

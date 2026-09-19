@@ -11,6 +11,7 @@ from app.models import (
     DropdownOption,
     DropdownOptionScope,
     ManualTimeEntrySettings,
+    Permission,
     User,
 )
 from app.schemas import (
@@ -25,7 +26,7 @@ from app.schemas import (
     ManualEntrySettingsRead,
     ManualEntrySettingsUpdate,
 )
-from app.services.authz import assert_admin, role_key
+from app.services.authz import assert_has_permission, has_permission
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -116,7 +117,7 @@ def update_board_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_BOARD_CONFIG)
     config = db.get(BoardConfig, "default")
     if not config:
         config = BoardConfig(id="default")
@@ -149,7 +150,7 @@ def update_manual_entry_settings(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_MANUAL_ENTRY_SETTINGS)
     settings = db.get(ManualTimeEntrySettings, "default")
     if not settings:
         settings = ManualTimeEntrySettings(id="default")
@@ -171,7 +172,7 @@ def create_custom_field(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_CUSTOM_FIELDS)
     field = CustomFieldDefinition(name=field_in.name, field_type=field_in.field_type)
     db.add(field)
     db.flush()
@@ -200,7 +201,7 @@ def update_custom_field(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_CUSTOM_FIELDS)
     field = db.get(CustomFieldDefinition, field_id)
     if not field:
         raise HTTPException(status_code=404, detail="Custom field not found")
@@ -218,7 +219,7 @@ def update_custom_field(
 def delete_custom_field(
     field_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_CUSTOM_FIELDS)
     field = db.get(CustomFieldDefinition, field_id)
     if not field:
         raise HTTPException(status_code=404, detail="Custom field not found")
@@ -247,7 +248,7 @@ def list_dropdown_options(
         DropdownOption.scope == scope_enum,
         DropdownOption.custom_field_id == resolved_field_id,
     )
-    if not (include_inactive and role_key(current_user) == "admin"):
+    if not (include_inactive and has_permission(current_user, Permission.MANAGE_DROPDOWN_OPTIONS)):
         query = query.filter(DropdownOption.is_active.is_(True))
     options = query.order_by(DropdownOption.position).all()
     return [_serialize_option(o) for o in options]
@@ -259,7 +260,7 @@ def create_dropdown_option(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_DROPDOWN_OPTIONS)
     scope_enum = _parse_scope(option_in.scope)
     resolved_field_id = _validate_scope_and_field(db, scope_enum, option_in.custom_field_id)
 
@@ -320,7 +321,7 @@ def update_dropdown_option(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_DROPDOWN_OPTIONS)
     option = db.get(DropdownOption, option_id)
     if not option:
         raise HTTPException(status_code=404, detail="Dropdown option not found")
@@ -346,7 +347,7 @@ def delete_dropdown_option(
 ):
     """Despite the verb, soft-deactivates (sets is_active=False) — same
     rationale as `DELETE /users/{id}` in the auth-rbac design (§2.7)."""
-    assert_admin(current_user)
+    assert_has_permission(current_user, Permission.MANAGE_DROPDOWN_OPTIONS)
     option = db.get(DropdownOption, option_id)
     if not option:
         raise HTTPException(status_code=404, detail="Dropdown option not found")
