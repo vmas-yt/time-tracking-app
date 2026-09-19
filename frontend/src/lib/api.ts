@@ -13,6 +13,8 @@ import type {
   ManualEntrySettings,
   Project,
   ReminderCandidate,
+  Role,
+  RolePermissionAuditEntry,
   SwimlaneField,
   Task,
   TaskCategory,
@@ -86,7 +88,14 @@ export const api = {
   createUser: (input: {
     email: string;
     full_name: string;
+    // Round B3 (docs/design/custom-roles-design.md §4.2): `role` and
+    // `role_id` are mutually exclusive — send at most one. `role` picks a
+    // builtin by enum value (existing behavior, unchanged); `role_id` picks
+    // any row (builtin or custom) by id, the only way to assign a custom
+    // role. The backend 400s if both are present and non-null; the frontend
+    // doesn't pre-validate that here since enforcement is the backend's job.
     role?: UserRole;
+    role_id?: string | null;
     manager_id?: string | null;
     team_id?: string | null;
     password: string;
@@ -96,7 +105,9 @@ export const api = {
     input: Partial<{
       full_name: string;
       email: string;
+      // Same mutual-exclusivity note as `createUser` above (§4.2).
       role: UserRole;
+      role_id: string | null;
       manager_id: string | null;
       team_id: string | null;
       is_active: boolean;
@@ -156,6 +167,32 @@ export const api = {
   // shape as `deactivateDepartment` above. 409 if the team still has active
   // members assigned to it.
   deactivateTeam: (teamId: string) => request<Team>(`/teams/${teamId}`, { method: "DELETE" }),
+
+  // Round B3 custom roles (docs/design/custom-roles-design.md §2). Unlike
+  // Departments/Teams, `GET /roles` is open-read for any authenticated user
+  // (the Users screen's role picker needs it), and `DELETE` is a real hard
+  // delete (§2.5) rather than a soft-deactivate — matching
+  // `deleteCustomField`'s `void`/204 convention below, not
+  // `deactivateDepartment`/`deactivateTeam`'s "returns the updated row" one.
+  // Named `getRoles` (not `listRoles`, despite `listUsers`/`listDepartments`/
+  // `listTeams`'s naming convention elsewhere in this file) to match the
+  // exact call site name pinned for this round.
+  getRoles: () => request<Role[]>("/roles"),
+  createRole: (name: string) => request<Role>("/roles", { method: "POST", body: JSON.stringify({ name }) }),
+  updateRole: (roleId: string, name: string) =>
+    request<Role>(`/roles/${roleId}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  // Full-set replacement, not incremental add/remove (§2.4) — always send
+  // the complete list of keys the role should hold after this call.
+  updateRolePermissions: (roleId: string, permissionKeys: string[]) =>
+    request<Role>(`/roles/${roleId}/permissions`, {
+      method: "PUT",
+      body: JSON.stringify({ permission_keys: permissionKeys }),
+    }),
+  // 409s if built-in, still occupied by a user (active or inactive, §6.3),
+  // or has any permission-change history (§2.5) — surfaced verbatim by
+  // callers via `errorMessage`, same as `deleteProject`'s guard.
+  deleteRole: (roleId: string) => request<void>(`/roles/${roleId}`, { method: "DELETE" }),
+  getRoleAudit: (roleId: string) => request<RolePermissionAuditEntry[]>(`/roles/${roleId}/audit`),
 
   listTasks: (params?: {
     projectId?: string;

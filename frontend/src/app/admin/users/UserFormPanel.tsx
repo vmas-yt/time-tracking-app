@@ -4,25 +4,24 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
-import type { Team, User, UserRole } from "@/lib/types";
+import type { Role, Team, User } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
 import { SlideOver, SlideOverHeader } from "@/components/ui/SlideOver";
 
-const ROLE_LABEL: Record<UserRole, string> = {
-  employee: "Employee",
-  manager: "Manager",
-  admin: "Admin",
-};
-
 /** Create/edit slide-over for a user — replaces the old inline
  * `CreateUserForm` (a form dropped below the table header) and `EditUserRow`
  * (a row swapped out for inputs in place). Same two API calls
- * (`createUser`/`updateUser`), same manager-picker restriction to
- * active manager/admin users (mirrors the backend's own `manager_id`
- * validation), same min-8-character password rule on create — pure
- * presentation change onto the shared `SlideOver` pattern. Password reset is
- * a separate, unrelated action and intentionally isn't part of this panel.
+ * (`createUser`/`updateUser`), same min-8-character password rule on create —
+ * pure presentation change onto the shared `SlideOver` pattern. Password
+ * reset is a separate, unrelated action and intentionally isn't part of this
+ * panel.
+ *
+ * Round B3 (docs/design/custom-roles-design.md §5.2): the role picker is
+ * sourced from `GET /roles` (builtin + custom) rather than a fixed 3-
+ * `UserRole` list, keyed by `role.id`, and the form submits `role_id` —
+ * never the legacy `role` field — so assigning a custom role works exactly
+ * the same way as assigning a builtin one.
  *
  * Manager is "derived, auto-synced" once a team is assigned: the backend
  * silently overwrites `manager_id` with the team's manager whenever
@@ -35,6 +34,7 @@ export function UserFormPanel({
   user,
   users,
   teams,
+  roles,
   onClose,
   onSaved,
 }: {
@@ -43,41 +43,53 @@ export function UserFormPanel({
   user: User | null;
   users: User[];
   teams: Team[];
+  roles: Role[];
   onClose: () => void;
   onSaved: (user: User, opts: { created: boolean }) => void;
 }) {
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
-  const [role, setRole] = useState<UserRole>("employee");
+  const [roleId, setRoleId] = useState("");
   const [managerId, setManagerId] = useState("");
   const [teamId, setTeamId] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const builtinEmployeeRoleId = roles.find((r) => r.is_builtin && r.key === "employee")?.id ?? "";
+  const builtinRoles = roles.filter((r) => r.is_builtin);
+  const customRoles = roles.filter((r) => !r.is_builtin);
+
   useEffect(() => {
     if (!open) return;
     if (mode === "edit" && user) {
       setFullName(user.full_name);
       setEmail(user.email);
-      setRole(user.role);
+      setRoleId(user.role_id ?? builtinEmployeeRoleId);
       setManagerId(user.manager_id ?? "");
       setTeamId(user.team_id ?? "");
     } else {
       setFullName("");
       setEmail("");
-      setRole("employee");
+      setRoleId(builtinEmployeeRoleId);
       setManagerId("");
       setTeamId("");
     }
     setPassword("");
     setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mode, user]);
 
   if (!open) return null;
 
+  // Manager-eligibility mirrors the backend's own `validate_manager_id`
+  // check (`role_key(manager) == "employee"` is the only disqualifier,
+  // §3.2 CONFIRMED no change needed for Round B3) — filtering by role_id
+  // against the builtin Employee row's id (rather than the legacy `role`
+  // enum, which is `null` for any custom-role holder) so a user holding a
+  // custom role is correctly still manager-eligible, not silently excluded.
   const managerOptions = users.filter(
-    (u) => u.id !== user?.id && u.is_active && (u.role === "manager" || u.role === "admin")
+    (u) => u.id !== user?.id && u.is_active && u.role_id !== builtinEmployeeRoleId
   );
   const teamOptions = teams.filter((t) => t.is_active);
   const selectedTeam = teams.find((t) => t.id === teamId);
@@ -88,7 +100,10 @@ export function UserFormPanel({
   const effectiveManagerId = teamId ? selectedTeam?.manager_id ?? null : managerId || null;
 
   const canSubmit =
-    email.trim().length > 0 && fullName.trim().length > 0 && (mode === "edit" || password.length >= 8);
+    email.trim().length > 0 &&
+    fullName.trim().length > 0 &&
+    roleId.length > 0 &&
+    (mode === "edit" || password.length >= 8);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -100,7 +115,7 @@ export function UserFormPanel({
         const created = await api.createUser({
           email: email.trim(),
           full_name: fullName.trim(),
-          role,
+          role_id: roleId,
           manager_id: effectiveManagerId,
           team_id: teamId || null,
           password,
@@ -110,7 +125,7 @@ export function UserFormPanel({
         const updated = await api.updateUser(user.id, {
           full_name: fullName.trim(),
           email: email.trim(),
-          role,
+          role_id: roleId,
           manager_id: effectiveManagerId,
           team_id: teamId || null,
         });
@@ -153,10 +168,28 @@ export function UserFormPanel({
 
         <label className="space-y-1.5 text-sm">
           <span className="font-semibold text-ink">Role</span>
-          <Select value={role} onChange={(e) => setRole(e.target.value as UserRole)}>
-            <option value="employee">Employee</option>
-            <option value="manager">Manager</option>
-            <option value="admin">Admin</option>
+          <Select value={roleId} onChange={(e) => setRoleId(e.target.value)}>
+            {roleId === "" && (
+              <option value="" disabled>
+                Select a role…
+              </option>
+            )}
+            <optgroup label="Built-in">
+              {builtinRoles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </optgroup>
+            {customRoles.length > 0 && (
+              <optgroup label="Custom">
+                {customRoles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </Select>
         </label>
 
@@ -186,7 +219,7 @@ export function UserFormPanel({
               <option value="">— no manager —</option>
               {managerOptions.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.full_name} ({ROLE_LABEL[m.role]})
+                  {m.full_name} ({m.role_name})
                 </option>
               ))}
             </Select>

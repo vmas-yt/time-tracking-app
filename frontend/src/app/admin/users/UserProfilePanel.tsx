@@ -1,16 +1,10 @@
 "use client";
 
-import type { User, UserRole } from "@/lib/types";
+import type { User } from "@/lib/types";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { SlideOver, SlideOverHeader } from "@/components/ui/SlideOver";
 import { formatRelativeTime } from "@/board/format";
-
-const ROLE_LABEL: Record<UserRole, string> = {
-  employee: "Employee",
-  manager: "Manager",
-  admin: "Admin",
-};
 
 /** Read-only slide-over for one user's profile, opened by clicking a name in
  * the Users table. Built on the shared `SlideOver` primitive — the same
@@ -32,7 +26,7 @@ export function UserProfilePanel({
       <SlideOverHeader onClose={onClose}>
         <div className="space-y-1.5">
           <div className="flex flex-wrap items-center gap-1.5">
-            <Badge tone="brand">{ROLE_LABEL[user.role]}</Badge>
+            <Badge tone="brand">{user.role_name}</Badge>
             {user.is_active ? <Badge tone="green">Active</Badge> : <Badge tone="red">Deactivated</Badge>}
           </div>
           <h2 className="text-xl font-bold leading-tight tracking-tight text-ink">{user.full_name}</h2>

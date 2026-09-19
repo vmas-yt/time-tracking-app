@@ -1,7 +1,9 @@
 /** Admin sub-navigation sections — single source of truth for the sidebar
  * (`layout.tsx`) and the index-route redirect (`page.tsx`). Departments and
  * Teams sit first — org structure is foundational (Users and Tasks both hang
- * off a Team) — followed by Users, then the rest in their existing order.
+ * off a Team) — followed by Users, then Roles (Round B3 — custom roles and
+ * their granular permissions, the "what can this user's role do" complement
+ * to Users' "who is this person"), then the rest in their existing order.
  * Swim Lanes and Manual Time Settings are grouped together at the end —
  * both are single-value board/policy settings rather than table+CRUD
  * screens. */
@@ -9,6 +11,7 @@ export const ADMIN_SECTIONS = [
   { href: "/admin/departments", label: "Departments" },
   { href: "/admin/teams", label: "Teams" },
   { href: "/admin/users", label: "Users" },
+  { href: "/admin/roles", label: "Roles" },
   { href: "/admin/projects", label: "Projects" },
   { href: "/admin/custom-fields", label: "Custom Fields" },
   { href: "/admin/categories", label: "Categories" },

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
-import type { Department, Team, User } from "@/lib/types";
+import type { Department, Role, Team, User } from "@/lib/types";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -19,6 +19,7 @@ export default function TeamsPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -33,11 +34,15 @@ export default function TeamsPage() {
       api.listTeams({ includeInactive: true }),
       api.listDepartments({ includeInactive: true }),
       api.listUsers({ includeInactive: true }),
+      // Round B3: manager-picker eligibility needs role_id, not just the
+      // legacy `role` enum (§3.2) — see TeamFormPanel.
+      api.getRoles(),
     ])
-      .then(([teamList, departmentList, userList]) => {
+      .then(([teamList, departmentList, userList, roleList]) => {
         setTeams(teamList);
         setDepartments(departmentList);
         setUsers(userList);
+        setRoles(roleList);
         setError(null);
       })
       .catch((err) => setError(errorMessage(err)))
@@ -189,6 +194,7 @@ export default function TeamsPage() {
         team={activeTeam}
         departments={departments}
         users={users}
+        roles={roles}
         onClose={() => setFormOpen(false)}
         onSaved={(saved, opts) => {
           upsert(saved, opts.created);

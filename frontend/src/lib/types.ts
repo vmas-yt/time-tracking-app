@@ -26,13 +26,128 @@ export interface User {
   id: string;
   email: string;
   full_name: string;
-  role: UserRole;
+  // Round B3 (docs/design/custom-roles-design.md §4.1/§4.4): nullable, not a
+  // pre-existing-but-untriggered bug fix — the legacy three-way enum has no
+  // valid value to hold for a user assigned a genuinely custom role, and
+  // becomes `null` on the wire for that user. Every existing caller keying
+  // off this field for a builtin employee/manager/admin user is unaffected;
+  // callers must handle `null` (a custom-role holder) explicitly rather than
+  // indexing a `Record<UserRole, ...>` with it directly. Prefer `role_name`
+  // below for display — it's already resolved server-side for both builtin
+  // and custom roles.
+  role: UserRole | null;
+  // Round B3: FK to the `Role` row backing this user (builtin or custom) —
+  // always non-null in practice (every user has a resolved role row), typed
+  // nullable to match the wire contract exactly (§4.1).
+  role_id: string | null;
+  // Round B3: server-resolved display name for `role_id`'s row — works
+  // uniformly whether the user holds a builtin or custom role. This is the
+  // field to render in place of a `ROLE_LABEL[user.role]` lookup.
+  role_name: string;
   manager_id: string | null;
   team_id: string | null;
   is_active: boolean;
   deactivated_at: string | null;
   created_at: string;
 }
+
+// Round B3 (docs/design/custom-roles-design.md §2). A `Role` row — builtin
+// (employee/manager/admin, fixed, not permission-configurable — §2.4) or
+// custom (admin-created via `POST /roles`, permission set fully replaceable
+// via `PUT /roles/{id}/permissions`). `permission_keys` is `string[]`, not
+// `PermissionKey[]`: it's server-echoed data that should round-trip safely
+// even if the frontend's catalog copy (`PERMISSION_CATALOG` below) ever lags
+// behind a backend-added key, same defensive-typing rationale as
+// `TaskCategory`/`TaskPriority` above.
+export interface Role {
+  id: string;
+  key: string;
+  name: string;
+  is_builtin: boolean;
+  permission_keys: string[];
+  created_at: string;
+}
+
+// Round B3 §2.7 — `GET /roles/{id}/audit`'s response shape, already grouped
+// by `batch_id` server-side (one entry per `PUT /roles/{id}/permissions`
+// call, not one row per changed permission key — see the design doc's own
+// `RolePermissionAuditEntry` DB model docstring for why the *storage* shape
+// is one-row-per-key while this, the *read* shape, folds those rows back
+// into `added`/`removed` lists per batch). `actor` is the acting admin's
+// identity, not a bare id, matching the exact JSON in §2.7 (a resolved
+// `{ id, full_name, email }`, the same shape already used elsewhere for
+// resolved-actor display, e.g. `ReminderCandidate`) — deliberately *not*
+// the flatter `actor_id: string` sometimes assumed, since the endpoint
+// resolves and returns the full identity so the History panel (§5.1) never
+// needs a second lookup against the (possibly since-deactivated) actor.
+export interface RolePermissionAuditEntry {
+  batch_id: string;
+  actor: { id: string; full_name: string; email: string };
+  occurred_at: string;
+  added: string[];
+  removed: string[];
+}
+
+// Round B3 §1.3 — the full grantable permission catalog (12 keys). Deliberately
+// excludes `manage_roles_permissions`: there is no such permission (§1.1),
+// managing roles/permissions stays floor-admin-only (`assert_admin`),
+// never delegable via this catalog.
+export type PermissionKey =
+  | "manage_departments"
+  | "manage_teams"
+  | "manage_projects"
+  | "manage_custom_fields"
+  | "manage_dropdown_options"
+  | "manage_board_config"
+  | "manage_manual_entry_settings"
+  | "archive_tasks"
+  | "view_all_tasks"
+  | "view_all_time_entries"
+  | "view_reports_all"
+  | "view_all_reminders";
+
+// The three §5.1 checklist groupings for the future `RolePermissionsPanel`.
+export type PermissionGroup = "Organization" | "Board & task admin" | "Visibility";
+
+// key -> { label, group } — mirrors the `Record`-of-metadata shape this file
+// otherwise expresses as `{ key, label }[]` arrays (`TASK_CATEGORIES` etc.),
+// but keyed by permission for O(1) lookup from a checkbox list, since the
+// consumer (§5.1's `RolePermissionsPanel`) needs to look up a label for an
+// arbitrary already-known key far more often than it needs to iterate in a
+// fixed display order. `PERMISSION_KEYS` below covers the iteration case.
+export const PERMISSION_CATALOG: Record<PermissionKey, { label: string; group: PermissionGroup }> = {
+  manage_departments: { label: "Manage departments", group: "Organization" },
+  manage_teams: { label: "Manage teams", group: "Organization" },
+  manage_projects: { label: "Manage projects", group: "Organization" },
+  manage_custom_fields: { label: "Manage custom fields", group: "Board & task admin" },
+  manage_dropdown_options: { label: "Manage dropdown options", group: "Board & task admin" },
+  manage_board_config: { label: "Change swim-lane grouping", group: "Board & task admin" },
+  manage_manual_entry_settings: { label: "Change manual time-entry policy", group: "Board & task admin" },
+  archive_tasks: { label: "Archive/unarchive tasks", group: "Board & task admin" },
+  view_all_tasks: { label: "View all tasks", group: "Visibility" },
+  view_all_time_entries: { label: "View & control all time entries", group: "Visibility" },
+  view_reports_all: { label: "View all reports", group: "Visibility" },
+  view_all_reminders: { label: "View all reminders", group: "Visibility" },
+};
+
+// Stable iteration order (catalog table order, §1.3) for rendering the
+// checklist grouped by `PermissionGroup` — `Object.keys` order on a
+// string-keyed object is insertion order in practice, but an explicit const
+// array avoids relying on that for display ordering.
+export const PERMISSION_KEYS: PermissionKey[] = [
+  "manage_departments",
+  "manage_teams",
+  "manage_projects",
+  "manage_custom_fields",
+  "manage_dropdown_options",
+  "manage_board_config",
+  "manage_manual_entry_settings",
+  "archive_tasks",
+  "view_all_tasks",
+  "view_all_time_entries",
+  "view_reports_all",
+  "view_all_reminders",
+];
 
 export interface Project {
   id: string;

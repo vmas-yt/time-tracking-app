@@ -5,19 +5,13 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
-import type { Team, User, UserRole } from "@/lib/types";
+import type { Role, Team, User } from "@/lib/types";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { UserFormPanel } from "./UserFormPanel";
 import { UserProfilePanel } from "./UserProfilePanel";
-
-const ROLE_LABEL: Record<UserRole, string> = {
-  employee: "Employee",
-  manager: "Manager",
-  admin: "Admin",
-};
 
 /** Inline password-reset row — the one remaining inline-edit affordance in
  * this table. Not part of the create/edit-goes-to-a-slide-over restructuring
@@ -81,6 +75,7 @@ export default function UsersPage() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -93,10 +88,19 @@ export default function UsersPage() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([api.listUsers({ includeInactive: true }), api.listTeams({ includeInactive: true })])
-      .then(([userList, teamList]) => {
+    Promise.all([
+      api.listUsers({ includeInactive: true }),
+      api.listTeams({ includeInactive: true }),
+      // Round B3: the role picker inside UserFormPanel is sourced from
+      // GET /roles (builtin + custom), not a fixed 3-UserRole list — fetched
+      // here alongside users/teams so the panel never has to manage its own
+      // loading state for it.
+      api.getRoles(),
+    ])
+      .then(([userList, teamList, roleList]) => {
         setUsers(userList);
         setTeams(teamList);
+        setRoles(roleList);
         setError(null);
       })
       .catch((err) => setError(errorMessage(err)))
@@ -208,7 +212,7 @@ export default function UsersPage() {
                         </button>
                       </td>
                       <td className="py-2 text-mute">{u.email}</td>
-                      <td className="py-2 text-body">{ROLE_LABEL[u.role]}</td>
+                      <td className="py-2 text-body">{u.role_name}</td>
                       <td className="py-2 text-body">{team?.name ?? "—"}</td>
                       <td className="py-2 text-body">{manager?.full_name ?? "—"}</td>
                       <td className="py-2">
@@ -260,6 +264,7 @@ export default function UsersPage() {
         user={editingUser}
         users={users}
         teams={teams}
+        roles={roles}
         onClose={() => setFormOpen(false)}
         onSaved={(user, { created }) => {
           upsertUser(user);

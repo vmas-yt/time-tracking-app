@@ -4,28 +4,30 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
-import type { Department, Team, User, UserRole } from "@/lib/types";
+import type { Department, Role, Team, User } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
 import { SlideOver, SlideOverHeader } from "@/components/ui/SlideOver";
 
-const ROLE_LABEL: Record<UserRole, string> = {
-  employee: "Employee",
-  manager: "Manager",
-  admin: "Admin",
-};
-
 /** Create/edit slide-over for a team — mirrors `ProjectFormPanel`'s
- * `mode: "create" | "edit"` shape. Manager picker is the exact same pattern
- * as `UserFormPanel`'s (active users with role manager/admin, "— no manager
- * —" option) since a Team's manager is who Users assigned to it get synced
- * to. Department is required (every team hangs off exactly one department). */
+ * `mode: "create" | "edit"` shape. Manager picker is the same pattern as
+ * `UserFormPanel`'s ("— no manager —" option, otherwise every active,
+ * manager-eligible user) since a Team's manager is who Users assigned to it
+ * get synced to. Department is required (every team hangs off exactly one
+ * department).
+ *
+ * Round B3 (docs/design/custom-roles-design.md §3.2): manager-eligibility
+ * mirrors the backend's own `validate_manager_id` check — "not the builtin
+ * Employee role" — via `role_id`, not the legacy `role` enum (which is
+ * `null` for a custom-role holder), so a user holding a custom role is
+ * correctly still offered as a manager candidate. */
 export function TeamFormPanel({
   open,
   mode,
   team,
   departments,
   users,
+  roles,
   onClose,
   onSaved,
 }: {
@@ -34,6 +36,7 @@ export function TeamFormPanel({
   team: Team | null;
   departments: Department[];
   users: User[];
+  roles: Role[];
   onClose: () => void;
   onSaved: (team: Team, opts: { created: boolean }) => void;
 }) {
@@ -44,7 +47,8 @@ export function TeamFormPanel({
   const [error, setError] = useState<string | null>(null);
 
   const activeDepartments = departments.filter((d) => d.is_active);
-  const managerOptions = users.filter((u) => u.is_active && (u.role === "manager" || u.role === "admin"));
+  const builtinEmployeeRoleId = roles.find((r) => r.is_builtin && r.key === "employee")?.id ?? "";
+  const managerOptions = users.filter((u) => u.is_active && u.role_id !== builtinEmployeeRoleId);
 
   useEffect(() => {
     if (!open) return;
@@ -133,7 +137,7 @@ export function TeamFormPanel({
             <option value="">— no manager —</option>
             {managerOptions.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.full_name} ({ROLE_LABEL[m.role]})
+                {m.full_name} ({m.role_name})
               </option>
             ))}
           </Select>
