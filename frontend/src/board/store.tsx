@@ -19,6 +19,7 @@ import type {
 } from "@/lib/types";
 import { useTimerSession } from "./session";
 import type { SessionToast } from "./session";
+import type { ManualLogInput } from "@/lib/types";
 
 export interface CreateTaskInput {
   title: string;
@@ -31,6 +32,11 @@ export interface CreateTaskInput {
   project_id?: string | null;
   custom_values?: Record<string, string>;
 }
+
+/** `CreateTaskInput` plus the manual-log trio — body of `POST
+ * /tasks/manual-log` (create a brand-new task and its first logged time
+ * entry in one shot). */
+export interface CreateManualTaskInput extends CreateTaskInput, ManualLogInput {}
 
 export interface UpdateTaskInput {
   title?: string;
@@ -73,6 +79,8 @@ interface BoardApi {
   stop: (entry: TimeEntry) => void;
   move: (taskId: string, target: TaskStatus) => void;
   createTask: (input: CreateTaskInput) => Promise<Task | null>;
+  createManualTask: (input: CreateManualTaskInput) => Promise<Task | null>;
+  logManualTime: (taskId: string, input: ManualLogInput) => Promise<Task | null>;
   updateTask: (taskId: string, input: UpdateTaskInput) => Promise<Task | null>;
   setSwimlaneField: (field: SwimlaneField) => void;
   refresh: () => void;
@@ -160,6 +168,20 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
     [session, projectId]
   );
 
+  const createManualTask = useCallback(
+    (input: CreateManualTaskInput) =>
+      session.runMutation("__create_task__", () =>
+        api.createManualTask({ project_id: projectId, ...input })
+      ),
+    [session, projectId]
+  );
+
+  const logManualTime = useCallback(
+    (taskId: string, input: ManualLogInput) =>
+      session.runMutation(taskId, () => api.logManualTimeForTask(taskId, input)),
+    [session]
+  );
+
   const updateTask = useCallback(
     (taskId: string, input: UpdateTaskInput) => session.runMutation(taskId, () => api.updateTask(taskId, input)),
     [session]
@@ -212,6 +234,8 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
       stop: session.stop,
       move,
       createTask,
+      createManualTask,
+      logManualTime,
       updateTask,
       setSwimlaneField,
       refresh,
@@ -245,6 +269,8 @@ export function BoardProvider({ children, projectId = null }: { children: ReactN
       session.stop,
       move,
       createTask,
+      createManualTask,
+      logManualTime,
       updateTask,
       setSwimlaneField,
       refresh,

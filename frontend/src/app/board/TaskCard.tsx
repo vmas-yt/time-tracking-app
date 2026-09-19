@@ -2,11 +2,21 @@
 
 import type { DragEvent } from "react";
 import type { Task } from "@/lib/types";
-import { Badge } from "@/components/ui/Badge";
+import { Badge, ManualEntryBadge } from "@/components/ui/Badge";
 import { cn } from "@/lib/cn";
 import { useBoard } from "@/board/store";
+import { formatRelativeTime } from "@/board/format";
 import { categoryLabelFor, optionLabel } from "@/lib/options";
 import { TimerControls } from "./TimerControls";
+
+function CalendarIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="2" />
+      <path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 interface TaskCardProps {
   task: Task;
@@ -81,6 +91,7 @@ export function TaskCard({ task, isDragging, onDragStart, onDragEnd }: TaskCardP
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex flex-wrap gap-1">
+          {task.is_manual_entry && <ManualEntryBadge />}
           {task.task_type === "ad_hoc" && <Badge tone="amber">Ad-hoc</Badge>}
           {task.priority === "expedite" && <Badge tone="red">Expedite</Badge>}
           <Badge tone="blue">{categoryLabel}</Badge>
@@ -109,6 +120,14 @@ export function TaskCard({ task, isDragging, onDragStart, onDragEnd }: TaskCardP
         </div>
       )}
 
+      <div
+        className="flex items-center gap-1 text-[11px] text-mute"
+        title="Reference date for this card — creation, start, or completion, whichever is most relevant right now"
+      >
+        <CalendarIcon />
+        {formatRelativeTime(task.card_date)}
+      </div>
+
       <div className="pt-0.5">
         <TimerControls
           task={task}
@@ -120,6 +139,10 @@ export function TaskCard({ task, isDragging, onDragStart, onDragEnd }: TaskCardP
           onPause={board.pause}
           onResume={board.resume}
           onStop={board.stop}
+          onManualLog={async (taskId, input) => {
+            const result = await board.logManualTime(taskId, input);
+            return result !== null;
+          }}
         />
       </div>
     </div>

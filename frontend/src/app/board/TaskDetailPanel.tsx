@@ -6,7 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import type { AuditEntry, Comment, TaskCategory, TaskPriority } from "@/lib/types";
 import { TASK_PRIORITIES } from "@/lib/types";
-import { Badge } from "@/components/ui/Badge";
+import { Badge, ManualEntryBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -249,6 +249,7 @@ export function TaskDetailPanel() {
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-1.5">
               <Badge tone={STATUS_TONE[task.status]}>{task.status.replace("_", " ")}</Badge>
+              {task.is_manual_entry && <ManualEntryBadge />}
               {task.task_type === "ad_hoc" && <Badge tone="amber">Ad-hoc</Badge>}
               {task.priority === "expedite" && <Badge tone="red">Expedite</Badge>}
               <Badge tone="blue">{categoryLabel}</Badge>
@@ -356,6 +357,26 @@ export function TaskDetailPanel() {
           ) : (
             <Card className="p-4">
               {task.description && <p className="mb-3 text-sm leading-relaxed text-body">{task.description}</p>}
+
+              <div className="mb-3 grid grid-cols-2 gap-4 border-b border-canvas-soft pb-3 text-xs">
+                <div>
+                  <div className="font-semibold text-ink">Start date</div>
+                  {task.started_at ? (
+                    <div className="text-body">{new Date(task.started_at).toLocaleDateString()}</div>
+                  ) : (
+                    <div className="italic text-mute">Not started yet</div>
+                  )}
+                </div>
+                <div>
+                  <div className="font-semibold text-ink">Completion date</div>
+                  {task.completed_at ? (
+                    <div className="text-body">{new Date(task.completed_at).toLocaleDateString()}</div>
+                  ) : (
+                    <div className="italic text-mute">Not completed yet</div>
+                  )}
+                </div>
+              </div>
+
               <TimerControls
                 task={task}
                 entries={board.entries}
@@ -366,6 +387,10 @@ export function TaskDetailPanel() {
                 onPause={board.pause}
                 onResume={board.resume}
                 onStop={board.stop}
+                onManualLog={async (taskId, input) => {
+                  const result = await board.logManualTime(taskId, input);
+                  return result !== null;
+                }}
                 size="md"
               />
             </Card>

@@ -9,7 +9,7 @@ import { categoryLabelFor } from "@/lib/options";
 import { useTimerSession } from "@/board/session";
 import { TimerControls } from "@/app/board/TimerControls";
 import { Toast } from "@/app/board/Toast";
-import { Badge } from "@/components/ui/Badge";
+import { Badge, ManualEntryBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -85,12 +85,33 @@ export default function TaskDetailPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-ink">{task.title}</h1>
             <div className="mt-2 flex flex-wrap gap-1.5">
+              <Badge tone="brand">{task.status.replace("_", " ")}</Badge>
+              {task.is_manual_entry && <ManualEntryBadge />}
               <Badge tone="blue">{categoryLabel}</Badge>
               <Badge tone="gray">{task.task_type === "ad_hoc" ? "Ad-hoc" : "Normal"}</Badge>
               {task.priority === "expedite" && <Badge tone="red">Expedite</Badge>}
-              <Badge tone="brand">{task.status.replace("_", " ")}</Badge>
             </div>
             {task.description && <p className="mt-4 text-sm text-body">{task.description}</p>}
+
+            <div className="mt-4 grid grid-cols-2 gap-4 border-b border-canvas-soft pb-4 text-xs">
+              <div>
+                <div className="font-semibold text-ink">Start date</div>
+                {task.started_at ? (
+                  <div className="text-body">{new Date(task.started_at).toLocaleDateString()}</div>
+                ) : (
+                  <div className="italic text-mute">Not started yet</div>
+                )}
+              </div>
+              <div>
+                <div className="font-semibold text-ink">Completion date</div>
+                {task.completed_at ? (
+                  <div className="text-body">{new Date(task.completed_at).toLocaleDateString()}</div>
+                ) : (
+                  <div className="italic text-mute">Not completed yet</div>
+                )}
+              </div>
+            </div>
+
             <div className="mt-4">
               <TimerControls
                 task={task}
@@ -102,6 +123,10 @@ export default function TaskDetailPage() {
                 onPause={session.pause}
                 onResume={session.resume}
                 onStop={session.stop}
+                onManualLog={async (taskId, input) => {
+                  const result = await session.runMutation(taskId, () => api.logManualTimeForTask(taskId, input));
+                  return result !== null;
+                }}
                 size="md"
               />
             </div>

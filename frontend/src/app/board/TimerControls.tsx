@@ -1,10 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Task, TimeEntry } from "@/lib/types";
+import type { ManualEntrySettings, ManualLogInput, Task, TimeEntry } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { canResume, canStart, elapsedSeconds, openEntryForTask } from "@/board/engine";
 import { formatDuration } from "@/board/format";
+import {
+  fetchManualEntrySettings,
+  todayDateString,
+  toDurationMinutes,
+  validateManualLog,
+  type ManualLogDraft,
+} from "@/board/manualLog";
+import { ManualLogFields } from "./ManualLogFields";
 
 function PlayIcon() {
   return (
@@ -51,6 +60,12 @@ interface TimerControlsProps {
   onPause: (entry: TimeEntry) => void;
   onResume: (entry: TimeEntry) => void;
   onStop: (entry: TimeEntry) => void;
+  /** Submits a manual/retroactive entry for this task (same eligibility
+   * window as Start: To Do/On Hold, no existing entry). Resolves `true` on
+   * success so the modal can close itself; `false`/rejected leaves it open
+   * so the user can fix the form — the caller's own toast already surfaces
+   * *why* it failed. */
+  onManualLog: (taskId: string, input: ManualLogInput) => Promise<boolean>;
   size?: "sm" | "md";
 }
 
@@ -72,6 +87,7 @@ export function TimerControls({
   onPause,
   onResume,
   onStop,
+  onManualLog,
   size = "sm",
 }: TimerControlsProps) {
   const engineState = { tasks: [task], entries };
@@ -84,6 +100,46 @@ export function TimerControls({
   const [seconds, setSeconds] = useState<number | null>(null);
   const [confirmingStop, setConfirmingStop] = useState(false);
   const confirmTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ---- Manual/retroactive time logging (docs/PRD.md) ----------------------
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualDraft, setManualDraft] = useState<ManualLogDraft>({
+    startDate: todayDateString(),
+    completionDate: todayDateString(),
+    hours: 0,
+    minutes: 0,
+  });
+  const [manualSettings, setManualSettings] = useState<ManualEntrySettings | null>(null);
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+
+  const openManualLog = () => {
+    setManualDraft({ startDate: todayDateString(), completionDate: todayDateString(), hours: 0, minutes: 0 });
+    setManualError(null);
+    setManualOpen(true);
+    fetchManualEntrySettings()
+      .then(setManualSettings)
+      .catch(() => {
+        // Non-fatal — the backend still authoritatively validates on submit.
+      });
+  };
+
+  const submitManualLog = async () => {
+    const err = validateManualLog(manualDraft, manualSettings?.max_days_back ?? null);
+    if (err) {
+      setManualError(err);
+      return;
+    }
+    setManualError(null);
+    setManualSubmitting(true);
+    const ok = await onManualLog(task.id, {
+      start_date: manualDraft.startDate,
+      completion_date: manualDraft.completionDate,
+      duration_minutes: toDurationMinutes(manualDraft),
+    });
+    setManualSubmitting(false);
+    if (ok) setManualOpen(false);
+  };
 
   useEffect(() => {
     if (!ownEntry) return;
@@ -149,19 +205,50 @@ export function TimerControls({
     const check = canStart(engineState, task.id, currentUserId);
     return (
       <div className="flex flex-col items-start gap-1">
-        <Button
-          size={size}
-          variant="primary"
-          disabled={!check.ok || isPending}
-          onClick={(e) => {
-            e.stopPropagation();
-            onStart(task.id);
-          }}
-          className="shadow-none"
-        >
-          <PlayIcon /> Start
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size={size}
+            variant="primary"
+            disabled={!check.ok || isPending}
+            onClick={(e) => {
+              e.stopPropagation();
+              onStart(task.id);
+            }}
+            className="shadow-none"
+          >
+            <PlayIcon /> Start
+          </Button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              openManualLog();
+            }}
+            className="text-[11px] font-semibold text-body underline decoration-dotted underline-offset-2 hover:text-ink"
+          >
+            Log time manually
+          </button>
+        </div>
         {!check.ok && <span className="text-[11px] leading-tight text-mute">{check.reason}</span>}
+
+        <ConfirmDialog
+          open={manualOpen}
+          title="Log time manually"
+          description={`Record time already worked on "${task.title}" — this marks the task Completed, same as Stop.`}
+          confirmLabel="Log entry"
+          widthClassName="max-w-md"
+          busy={manualSubmitting}
+          confirmDisabled={toDurationMinutes(manualDraft) <= 0}
+          onConfirm={submitManualLog}
+          onCancel={() => setManualOpen(false)}
+        >
+          <ManualLogFields
+            draft={manualDraft}
+            onChange={setManualDraft}
+            maxDaysBack={manualSettings?.max_days_back ?? null}
+            error={manualError}
+          />
+        </ConfirmDialog>
       </div>
     );
   }

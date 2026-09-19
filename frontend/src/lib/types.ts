@@ -120,6 +120,17 @@ export interface ManualEntrySettings {
   updated_at: string;
 }
 
+/** Body shared by both manual-log endpoints (`POST /tasks/manual-log`'s
+ * trailing fields, and the whole body of `POST /tasks/{id}/manual-log`).
+ * Dates are plain `YYYY-MM-DD` strings — an HTML date input's native value —
+ * not full timestamps; there's no time-of-day component to a manually
+ * logged day. */
+export interface ManualLogInput {
+  start_date: string;
+  completion_date: string;
+  duration_minutes: number;
+}
+
 export interface Comment {
   id: string;
   task_id: string;
