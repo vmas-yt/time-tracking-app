@@ -1,7 +1,7 @@
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.deps import get_current_user
@@ -60,8 +60,15 @@ def _assert_name_not_blank(name: str) -> None:
 @router.get("", response_model=list[RoleRead])
 def list_roles(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Open-read (§2.1) — any authenticated user, same precedent as
-    `GET /departments`/`GET /teams`."""
-    roles = db.query(Role).order_by(Role.created_at).all()
+    `GET /departments`/`GET /teams`. Eager-loads `permissions` (found as an
+    N+1 in senior-qa's Round B3 verification pass) so `_serialize_role`'s
+    per-role access doesn't trigger one extra query per row."""
+    roles = (
+        db.query(Role)
+        .options(joinedload(Role.permissions))
+        .order_by(Role.created_at)
+        .all()
+    )
     return [_serialize_role(r) for r in roles]
 
 
