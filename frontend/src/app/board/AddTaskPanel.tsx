@@ -105,7 +105,11 @@ export function AddTaskPanel({ open, onClose }: { open: boolean; onClose: () => 
       category_other_text: category === "other" ? categoryOtherText.trim() : undefined,
       task_type: taskType,
       priority,
-      assignee_id: assigneeId || null,
+      // A manual entry always attributes its TimeEntry to whoever submits
+      // it (create_manual_entry backend-side), so it's forced to yourself
+      // here regardless of what the (disabled, in this mode) Assignee
+      // select last held — matching the disabled select's displayed value.
+      assignee_id: (mode === "manual" ? board.currentUserId : assigneeId) || null,
       project_id: projectId || null,
       custom_values: customValues,
     };
@@ -234,13 +238,22 @@ export function AddTaskPanel({ open, onClose }: { open: boolean; onClose: () => 
 
           <label className="space-y-1.5 text-sm">
             <span className="font-semibold text-ink">Assignee</span>
-            <Select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
+            <Select
+              value={mode === "manual" ? board.currentUserId : assigneeId}
+              onChange={(e) => setAssigneeId(e.target.value)}
+              disabled={mode === "manual"}
+            >
               {board.users.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.id === board.currentUserId ? `${u.full_name} (me)` : u.full_name}
                 </option>
               ))}
             </Select>
+            {mode === "manual" && (
+              <p className="text-xs text-mute">
+                A manual entry always logs time for yourself — the backend attributes it to whoever submits it.
+              </p>
+            )}
           </label>
 
           <label className="space-y-1.5 text-sm">

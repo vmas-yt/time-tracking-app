@@ -203,6 +203,13 @@ export function TimerControls({
       return <span className="text-[11px] italic text-mute">Move to To Do or On Hold to start tracking time</span>;
     }
     const check = canStart(engineState, task.id, currentUserId);
+    // Same assignee-only restriction as Start (a manual log always
+    // attributes the entry to whoever submits it, so only the assignee may
+    // — the backend 403s anyone else too), but independent of `check.ok`:
+    // an unrelated reason Start is disabled for right now (e.g. the
+    // assignee already has a different timer running) doesn't apply to
+    // logging already-worked, past time on this task.
+    const isAssignee = currentUserId === task.assignee_id;
     return (
       <div className="flex flex-col items-start gap-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -220,11 +227,17 @@ export function TimerControls({
           </Button>
           <button
             type="button"
+            disabled={!isAssignee}
+            title={isAssignee ? undefined : "Only the task's assignee may log manual time for it"}
             onClick={(e) => {
               e.stopPropagation();
               openManualLog();
             }}
-            className="text-[11px] font-semibold text-body underline decoration-dotted underline-offset-2 hover:text-ink"
+            className={
+              isAssignee
+                ? "text-[11px] font-semibold text-body underline decoration-dotted underline-offset-2 hover:text-ink"
+                : "text-[11px] font-semibold text-mute underline decoration-dotted underline-offset-2 opacity-60 cursor-not-allowed"
+            }
           >
             Log time manually
           </button>

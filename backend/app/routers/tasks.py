@@ -212,6 +212,18 @@ def create_manual_log_task(
     validate_manual_entry_dates(db, task_in)
 
     task = _build_task(db, task_in, current_user)
+    # Tightened to assignee-only (mirrors start_timer in time_entries.py):
+    # `_build_task` defaults a missing assignee_id to current_user, but an
+    # explicit assignee_id naming someone else is otherwise accepted by
+    # `POST /tasks` -- a manual log always attributes the resulting
+    # TimeEntry to current_user (see create_manual_entry), so creating one
+    # for a task assigned to someone other than yourself would silently log
+    # time under your identity for work nominally assigned to them.
+    if task.assignee_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Manual time can only be logged for a task assigned to yourself",
+        )
     db.add(task)
     db.flush()
     if task_in.custom_values:
@@ -246,7 +258,14 @@ def add_manual_log(
     mutually exclusive per task — enforced by requiring zero existing
     `TimeEntry` rows of any kind."""
     task = _get_task_or_404(db, task_id)
-    assert_can_edit_task(current_user, task)
+    # Tightened to assignee-only (mirrors start_timer in time_entries.py): a
+    # task's creator or an admin may edit the task generally, but a manual
+    # log always attributes the resulting TimeEntry to current_user (see
+    # create_manual_entry), so only the assignee -- the person who actually
+    # did the work -- may log it. This drops the creator/admin bypass that
+    # assert_can_edit_task would otherwise grant, for this one action only.
+    if current_user.id != task.assignee_id:
+        raise HTTPException(status_code=403, detail="Only the task's assignee may log manual time for it")
 
     if task.archived_at is not None:
         raise HTTPException(status_code=409, detail="Cannot log time against an archived task")

@@ -237,6 +237,87 @@ def test_manual_log_403_for_unrelated_user(client, auth_headers):
     assert resp.status_code == 403
 
 
+# ---- Attribution: assignee-only, mirroring start_timer's own restriction ----
+# Regression coverage for a real bug senior-qa found: `add_manual_log` used to
+# accept anyone `assert_can_edit_task` allows (assignee, creator, or admin),
+# but `create_manual_entry` unconditionally attributes the resulting
+# TimeEntry to the *caller* -- so a creator or admin logging time on a task
+# assigned to someone else would silently log hours under their own
+# identity for work nominally assigned to (and completed under the name of)
+# someone who never touched it, corrupting that person's own time-entry
+# history and falsely flagging them as never having logged time in
+# `GET /notifications/reminders`. Fixed by tightening both manual-log
+# endpoints to assignee-only, exactly like `start_timer`.
+
+
+def test_manual_log_403_for_creator_who_is_not_assignee(client, auth_headers):
+    """The task's creator -- who `assert_can_edit_task` would otherwise
+    allow to edit the task -- must NOT be able to manually log time against
+    it once assigned to someone else; only the assignee may."""
+    assignee_headers = _register(client, auth_headers, "manual-assignee@example.com")
+    assignee_id = client.get("/users/me", headers=assignee_headers).json()["id"]
+    task = _make_task(client, auth_headers, "Creator's task", assignee_id=assignee_id)
+
+    resp = client.post(f"/tasks/{task['id']}/manual-log", json=_valid_body(), headers=auth_headers)
+    assert resp.status_code == 403
+
+
+def test_manual_log_403_for_admin_who_is_not_assignee(client, auth_headers):
+    """Admin doesn't bypass this either -- same as `start_timer`."""
+    owner_headers = _register(client, auth_headers, "manual-owner2@example.com")
+    admin_id = client.get("/users/me", headers=auth_headers).json()["id"]
+    task = _make_task(client, owner_headers, "Owner's own task")
+    assert task["assignee_id"] != admin_id
+
+    resp = client.post(f"/tasks/{task['id']}/manual-log", json=_valid_body(), headers=auth_headers)
+    assert resp.status_code == 403
+
+
+def test_manual_log_new_task_403_when_assignee_is_someone_else(client, auth_headers):
+    """`POST /tasks/manual-log` with an explicit assignee_id naming someone
+    other than the caller must be rejected -- otherwise the caller could
+    create a task "for" someone else while still attributing the logged
+    hours to themselves."""
+    other_headers = _register(client, auth_headers, "manual-other@example.com")
+    other_id = client.get("/users/me", headers=other_headers).json()["id"]
+
+    resp = client.post(
+        "/tasks/manual-log",
+        json={
+            "title": "For someone else",
+            "category": "meeting",
+            "assignee_id": other_id,
+            **_valid_body(),
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 403
+
+
+def test_manual_log_time_entry_attributed_to_assignee(client, auth_headers, db_engine):
+    """Happy path (assignee logging their own task): the resulting
+    TimeEntry.user_id is the assignee/actor, confirming attribution is
+    correct once the caller *is* the assignee."""
+    from sqlalchemy.orm import sessionmaker
+
+    from app.models import TimeEntry
+
+    assignee_headers = _register(client, auth_headers, "manual-self@example.com")
+    assignee_id = client.get("/users/me", headers=assignee_headers).json()["id"]
+    task = _make_task(client, assignee_headers, "Self-assigned task")
+
+    resp = client.post(f"/tasks/{task['id']}/manual-log", json=_valid_body(), headers=assignee_headers)
+    assert resp.status_code == 201
+
+    Session = sessionmaker(bind=db_engine)
+    db = Session()
+    try:
+        entry = db.query(TimeEntry).filter(TimeEntry.task_id == task["id"]).one()
+        assert entry.user_id == assignee_id
+    finally:
+        db.close()
+
+
 def test_manual_log_409_for_archived_task(client, auth_headers, backlog_task_id):
     client.post(f"/tasks/{backlog_task_id}/archive", headers=auth_headers)
     resp = client.post(
