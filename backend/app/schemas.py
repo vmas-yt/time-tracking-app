@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, PlainSerializer, model_validator
@@ -182,6 +182,38 @@ class TaskCreate(TaskBase):
     custom_values: dict[str, str] | None = None
 
 
+# ---- Manual/retroactive time logging ----------------------------------------
+# See docs/PRD.md and the manual-time-logging design's "decisions already
+# made". The future/ordering checks below run at the Pydantic layer; the
+# N-day-back setting lookup and the duration-impossibility guard need a DB
+# read and so live in services/tasks.py::validate_manual_entry_dates instead.
+
+
+class ManualEntryCreate(BaseModel):
+    start_date: date
+    completion_date: date
+    duration_minutes: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _validate_dates(self):
+        today = date.today()
+        if self.start_date > today:
+            raise ValueError("start_date cannot be in the future")
+        if self.completion_date > today:
+            raise ValueError("completion_date cannot be in the future")
+        if self.completion_date < self.start_date:
+            raise ValueError("completion_date cannot be before start_date")
+        return self
+
+
+class ManualTaskCreate(TaskBase, ManualEntryCreate):
+    """Body for `POST /tasks/manual-log` — every `TaskBase` field plus the
+    shared manual-entry date/duration fields, for creating a brand-new task
+    and manually logging time against it in one shot."""
+
+    custom_values: dict[str, str] | None = None
+
+
 class TaskUpdate(BaseModel):
     """Manual field/status edits. IN_PROGRESS and COMPLETED are reached only
     through the timer endpoints, not through this endpoint."""
@@ -208,8 +240,18 @@ class TaskRead(TaskBase, UTCModel):
     updated_at: UTCDatetime
     completed_at: UTCDatetime | None
     archived_at: UTCDatetime | None = None
+    started_at: UTCDatetime | None
+    is_manual_entry: bool
     custom_values: dict[str, str] = {}
     total_logged_seconds: float = 0.0
+    # Server-computed in routers/tasks.py::_serialize (same convention as
+    # total_logged_seconds above — set after model_validate, not a Pydantic
+    # @computed_field): completed_at if COMPLETED, else started_at if set,
+    # else created_at. The default of None here is never seen by a client —
+    # every real response has `_serialize` fill it in — it only exists so
+    # `TaskRead.model_validate(task)` doesn't choke on the ORM object not
+    # having this attribute.
+    card_date: UTCDatetime | None = None
 
 
 # ---- Comments & audit trail ---------------------------------------------------
@@ -248,6 +290,7 @@ class TimeEntryRead(UTCModel):
     last_resumed_at: UTCDatetime | None
     accumulated_seconds: float
     ended_at: UTCDatetime | None
+    is_manual: bool
     elapsed_seconds: float = 0.0
 
 
@@ -316,6 +359,15 @@ class BoardConfigRead(UTCModel):
 
 class BoardConfigUpdate(BaseModel):
     swimlane_field: SwimlaneField
+
+
+class ManualEntrySettingsRead(UTCModel):
+    max_days_back: int
+    updated_at: UTCDatetime
+
+
+class ManualEntrySettingsUpdate(BaseModel):
+    max_days_back: int = Field(ge=0)
 
 
 # ---- Reporting -----------------------------------------------------------------

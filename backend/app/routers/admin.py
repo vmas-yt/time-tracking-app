@@ -10,6 +10,7 @@ from app.models import (
     CustomFieldType,
     DropdownOption,
     DropdownOptionScope,
+    ManualTimeEntrySettings,
     User,
 )
 from app.schemas import (
@@ -21,6 +22,8 @@ from app.schemas import (
     DropdownOptionCreate,
     DropdownOptionRead,
     DropdownOptionUpdate,
+    ManualEntrySettingsRead,
+    ManualEntrySettingsUpdate,
 )
 from app.services.authz import assert_admin, role_key
 
@@ -122,6 +125,39 @@ def update_board_config(
     db.commit()
     db.refresh(config)
     return config
+
+
+@router.get("/manual-entry-settings", response_model=ManualEntrySettingsRead)
+def get_manual_entry_settings(
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    """Any authenticated user may read this — employees need to know N to
+    know how far back they can log. Lazy-creates the `id="default"` row if
+    missing, exactly like `get_board_config` above."""
+    settings = db.get(ManualTimeEntrySettings, "default")
+    if not settings:
+        settings = ManualTimeEntrySettings(id="default")
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+@router.patch("/manual-entry-settings", response_model=ManualEntrySettingsRead)
+def update_manual_entry_settings(
+    update: ManualEntrySettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_admin(current_user)
+    settings = db.get(ManualTimeEntrySettings, "default")
+    if not settings:
+        settings = ManualTimeEntrySettings(id="default")
+        db.add(settings)
+    settings.max_days_back = update.max_days_back
+    db.commit()
+    db.refresh(settings)
+    return settings
 
 
 @router.get("/custom-fields", response_model=list[CustomFieldRead])

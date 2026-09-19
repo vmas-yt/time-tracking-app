@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ from app.models import (
     CustomFieldType,
     DropdownOption,
     DropdownOptionScope,
+    ManualTimeEntrySettings,
     Project,
     Task,
     TaskAuditEntry,
@@ -19,6 +20,7 @@ from app.models import (
     TimerStatus,
     User,
 )
+from app.schemas import ManualEntryCreate
 from app.services.timer import open_entry_for_task, pause_entry
 
 # Manual status transitions available outside the timer. IN_PROGRESS and
@@ -36,15 +38,29 @@ def record_audit(db: Session, task: Task, actor: User, action: AuditAction, deta
     db.add(TaskAuditEntry(task_id=task.id, actor_id=actor.id, action=action, detail=detail))
 
 
-def record_status_event(db: Session, task: Task, actor: User, from_status: TaskStatus | None, to_status: TaskStatus) -> None:
-    db.add(
-        TaskStatusEvent(
-            task_id=task.id,
-            from_status=from_status,
-            to_status=to_status,
-            changed_by_id=actor.id,
-        )
+def record_status_event(
+    db: Session,
+    task: Task,
+    actor: User,
+    from_status: TaskStatus | None,
+    to_status: TaskStatus,
+    occurred_at: datetime | None = None,
+) -> None:
+    """`occurred_at` defaults to the column's own `datetime.utcnow` default
+    (i.e. "now") when omitted. Manual/retroactive time logging is the one
+    caller that passes it explicitly, backdating the completion event to the
+    user's chosen Completion Date for cross-report consistency (Throughput,
+    Cumulative Flow/Control Chart) — see services/tasks.py::create_manual_entry.
+    """
+    event = TaskStatusEvent(
+        task_id=task.id,
+        from_status=from_status,
+        to_status=to_status,
+        changed_by_id=actor.id,
     )
+    if occurred_at is not None:
+        event.occurred_at = occurred_at
+    db.add(event)
 
 
 def change_status(db: Session, task: Task, actor: User, new_status: TaskStatus) -> Task:
@@ -186,6 +202,115 @@ def validate_project_exists(db: Session, project_id: str | None) -> None:
         raise HTTPException(
             status_code=400, detail="project_id does not reference an existing project"
         )
+
+
+def _resolve_max_days_back(db: Session) -> int:
+    """Read-only settings lookup for manual-entry *validation* — deliberately
+    never inserts the singleton row (that side effect belongs solely to
+    `GET /admin/manual-entry-settings`, mirroring `BoardConfig`'s own lazy
+    creation). Falls back to `ManualTimeEntrySettings.max_days_back`'s own
+    model default (7) if the row hasn't been created yet."""
+    settings = db.get(ManualTimeEntrySettings, "default")
+    if settings is not None:
+        return settings.max_days_back
+    return 7
+
+
+def validate_manual_entry_dates(db: Session, entry: ManualEntryCreate) -> None:
+    """DB-dependent half of manual-entry validation. The future-date/
+    ordering checks already ran in `ManualEntryCreate`'s own model_validator;
+    this covers the two checks that need a DB read or aren't expressible
+    without one: the admin-configurable N-day-back window (checked against
+    Start Date only — Completion Date is independently already validated as
+    `>= start_date` and `<= today`), and a coarse duration-impossibility
+    guard. Shared by both manual-log endpoints (existing task, and on top of
+    a brand-new task)."""
+    max_days_back = _resolve_max_days_back(db)
+    earliest_allowed = date.today() - timedelta(days=max_days_back)
+    if entry.start_date < earliest_allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"start_date is more than {max_days_back} days in the past",
+        )
+
+    days_spanned = (entry.completion_date - entry.start_date).days + 1
+    if entry.duration_minutes * 60 > days_spanned * 24 * 3600:
+        raise HTTPException(
+            status_code=400,
+            detail="duration_minutes is not possible within the given date range",
+        )
+
+
+def create_manual_entry(db: Session, task: Task, actor: User, entry: ManualEntryCreate) -> TimeEntry:
+    """The terminal manual/retroactive time-logging effect, shared by both
+    manual-log endpoints (adding to an existing task, and on top of a
+    brand-new task created in the same request). Caller is responsible for
+    every precondition (existence, permission, archived, already-completed,
+    existing-entries, date/duration validation — see
+    routers/tasks.py's manual-log endpoints).
+
+    Builds the synthetic `TimeEntry` already `STOPPED`, marks the task
+    `is_manual_entry` + terminal `Completed` (exactly like Stop — no further
+    timer/status transition is ever allowed out of it), and records exactly
+    one backdated `TaskStatusEvent` plus two `TaskAuditEntry` rows (the
+    existing STATUS_CHANGED pattern plus a new MANUAL_TIME_LOGGED one).
+
+    Known, bounded limitation (not fixed here — flagging rather than
+    silently leaving it unexplained): this event's `occurred_at` is
+    backdated to Completion Date, which is only guaranteed to sort after
+    every *other* event already recorded for this task if none of them
+    happened, in real time, after that date. `routers/tasks.py::
+    create_manual_log_task` backdates its own None->Backlog event to Start
+    Date specifically to guarantee this for the brand-new-task path (where
+    it would otherwise be wrong on *every* call, not just occasionally —
+    see that function's docstring). For the existing-task path
+    (`add_manual_log`), the target task's own prior status history is real
+    and untouched by this function; if that task had a genuine status
+    change (e.g. a manual move to On Hold and back) more recently than the
+    chosen Completion Date — which the zero-existing-TimeEntry-rows
+    precondition doesn't rule out, since manual status changes don't
+    require a timer — `reports.py::cumulative_flow`'s ascending-
+    `occurred_at` replay can show that task with a transient, incorrect
+    status for the days between the backdated completion and the present.
+    Closing this fully would mean either a new precondition (reject a
+    completion date earlier than the task's last status change) or a
+    change to `cumulative_flow`'s single-pass replay algorithm itself —
+    both real design decisions for solution-architect, not something to
+    improvise into a shared report function here.
+    """
+    start_dt = datetime.combine(entry.start_date, time.min)
+    completion_dt = datetime.combine(entry.completion_date, time.min)
+
+    time_entry = TimeEntry(
+        task_id=task.id,
+        user_id=actor.id,
+        status=TimerStatus.STOPPED,
+        is_manual=True,
+        last_resumed_at=None,
+        accumulated_seconds=float(entry.duration_minutes * 60),
+        started_at=start_dt,
+        ended_at=completion_dt,
+    )
+    db.add(time_entry)
+
+    from_status = task.status
+    task.is_manual_entry = True
+    task.started_at = start_dt
+    task.completed_at = completion_dt
+    task.status = TaskStatus.COMPLETED
+    record_status_event(db, task, actor, from_status, TaskStatus.COMPLETED, occurred_at=completion_dt)
+    record_audit(db, task, actor, AuditAction.STATUS_CHANGED, f"{from_status.value} -> completed")
+
+    hours, minutes = divmod(entry.duration_minutes, 60)
+    record_audit(
+        db,
+        task,
+        actor,
+        AuditAction.MANUAL_TIME_LOGGED,
+        f"Manually logged {hours}h {minutes}m (Start: {entry.start_date.isoformat()}, "
+        f"Completion: {entry.completion_date.isoformat()})",
+    )
+    return time_entry
 
 
 def total_logged_seconds(db: Session, task: Task) -> float:

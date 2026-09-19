@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_
@@ -21,6 +21,9 @@ from app.schemas import (
     AuditEntryRead,
     CommentCreate,
     CommentRead,
+    ManualEntryCreate,
+    ManualTaskCreate,
+    TaskBase,
     TaskCreate,
     TaskRead,
     TaskUpdate,
@@ -29,14 +32,23 @@ from app.services.authz import assert_admin, assert_can_edit_task, assert_can_vi
 from app.services.tasks import (
     apply_custom_values,
     change_status,
+    create_manual_entry,
     record_audit,
     record_status_event,
     total_logged_seconds,
     validate_dropdown_value,
+    validate_manual_entry_dates,
     validate_project_exists,
 )
 from app.services.teams import validate_team_id
+from app.services.timer import open_entry_for_task
 from app.services.users import validate_assignee_active
+
+# TaskBase's own field names — used to strip the extra manual-entry fields
+# (start_date/completion_date/duration_minutes) and custom_values off of
+# ManualTaskCreate before constructing a Task(**kwargs), the same way
+# TaskCreate's own custom_values is excluded below.
+_TASK_BASE_FIELDS = set(TaskBase.model_fields.keys())
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -50,6 +62,12 @@ def _serialize(db: Session, task: Task) -> TaskRead:
     data = TaskRead.model_validate(task)
     data.custom_values = _custom_values_map(db, task.id)
     data.total_logged_seconds = total_logged_seconds(db, task)
+    if task.status == TaskStatus.COMPLETED:
+        data.card_date = task.completed_at
+    elif task.started_at is not None:
+        data.card_date = task.started_at
+    else:
+        data.card_date = task.created_at
     return data
 
 
@@ -57,6 +75,38 @@ def _get_task_or_404(db: Session, task_id: str) -> Task:
     task = db.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+def _validate_task_fields(db: Session, task_in: TaskBase) -> None:
+    """Shared field validation for creating a task — used by both the plain
+    `POST /tasks` and the manual-log `POST /tasks/manual-log`, which share
+    every `TaskBase` field unchanged."""
+    validate_assignee_active(db, task_in.assignee_id)
+    validate_project_exists(db, task_in.project_id)
+    validate_dropdown_value(db, DropdownOptionScope.TASK_CATEGORY, task_in.category)
+    validate_dropdown_value(db, DropdownOptionScope.TASK_PRIORITY, task_in.priority)
+    if task_in.team_id is not None:
+        validate_team_id(db, task_in.team_id)
+
+
+def _build_task(db: Session, task_in: TaskBase, current_user: User) -> Task:
+    """Shared task construction (defaulting assignee/team) for both
+    `POST /tasks` and `POST /tasks/manual-log`. Caller adds the row, flushes,
+    and records its own CREATED audit/status-event afterward."""
+    task_data = task_in.model_dump(include=_TASK_BASE_FIELDS)
+    task = Task(**task_data, created_by_id=current_user.id, status=TaskStatus.BACKLOG)
+    if task.assignee_id is None:
+        task.assignee_id = current_user.id
+    if task.team_id is None:
+        # One-time default at creation (never re-derived later, see the
+        # comment on Task.team_id in models.py): the resolved assignee's
+        # team_id — which, since assignee_id was just self-assigned to the
+        # creator above when none was given, naturally covers both "an
+        # assignee is given" (use their team) and "no assignee given" (use
+        # the creator's team, because the creator *is* the assignee here).
+        resolved_assignee = db.get(User, task.assignee_id) if task.assignee_id else None
+        task.team_id = resolved_assignee.team_id if resolved_assignee else None
     return task
 
 
@@ -110,36 +160,112 @@ def list_tasks(
 def create_task(
     task_in: TaskCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    validate_assignee_active(db, task_in.assignee_id)
-    validate_project_exists(db, task_in.project_id)
-    validate_dropdown_value(db, DropdownOptionScope.TASK_CATEGORY, task_in.category)
-    validate_dropdown_value(db, DropdownOptionScope.TASK_PRIORITY, task_in.priority)
-    if task_in.team_id is not None:
-        validate_team_id(db, task_in.team_id)
-
-    task_data = task_in.model_dump(exclude={"custom_values"})
-    task = Task(
-        **task_data,
-        created_by_id=current_user.id,
-        status=TaskStatus.BACKLOG,
-    )
-    if task.assignee_id is None:
-        task.assignee_id = current_user.id
-    if task.team_id is None:
-        # One-time default at creation (never re-derived later, see the
-        # comment on Task.team_id in models.py): the resolved assignee's
-        # team_id — which, since assignee_id was just self-assigned to the
-        # creator above when none was given, naturally covers both "an
-        # assignee is given" (use their team) and "no assignee given" (use
-        # the creator's team, because the creator *is* the assignee here).
-        resolved_assignee = db.get(User, task.assignee_id) if task.assignee_id else None
-        task.team_id = resolved_assignee.team_id if resolved_assignee else None
+    _validate_task_fields(db, task_in)
+    task = _build_task(db, task_in, current_user)
     db.add(task)
     db.flush()
     if task_in.custom_values:
         apply_custom_values(db, task, task_in.custom_values)
     record_audit(db, task, current_user, AuditAction.CREATED, f"Task created: {task.title}")
     record_status_event(db, task, current_user, None, TaskStatus.BACKLOG)
+    db.commit()
+    db.refresh(task)
+    return _serialize(db, task)
+
+
+@router.post("/manual-log", response_model=TaskRead, status_code=201)
+def create_manual_log_task(
+    task_in: ManualTaskCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a brand-new task and manually log time against it in one shot
+    (manual/retroactive time-logging feature). Same field validation as
+    `POST /tasks` (assignee active, project exists, category/priority,
+    team_id), plus the manual-entry date/duration validation, then the task
+    is created exactly like `create_task` (Backlog, CREATED audit,
+    None -> Backlog status event) before the manual log is applied on top
+    (STATUS_CHANGED + MANUAL_TIME_LOGGED audit rows, Backlog -> Completed
+    status event backdated to the completion date) — see
+    services/tasks.py::create_manual_entry.
+
+    The None -> Backlog event's `occurred_at` is backdated to Start Date
+    (not left at the default "now") specifically for this path: the
+    Backlog -> Completed event `create_manual_entry` records below is
+    backdated to Completion Date, and Completion Date can be any day up to
+    and including today. Leaving this creation event at real "now" would
+    make it sort *after* that backdated completion event in
+    `reports.py::cumulative_flow`'s ascending-`occurred_at` replay whenever
+    Completion Date is today or in the past relative to the current
+    instant — which is every single call, since Completion Date is
+    validated to never be in the future. Cumulative Flow processes events
+    in order and lets the last-processed one win, so without this fix the
+    later-sorted (but logically earlier) creation event would permanently
+    overwrite the task's replayed status back to Backlog, making every
+    manually-logged new task look stuck in Backlog forever on the
+    Cumulative Flow/Control Chart reports. Backdating to Start Date keeps
+    this event's `occurred_at` <= the completion event's (`start_date <=
+    completion_date` is already validated), so replay order matches actual
+    logical order.
+    """
+    _validate_task_fields(db, task_in)
+    validate_manual_entry_dates(db, task_in)
+
+    task = _build_task(db, task_in, current_user)
+    db.add(task)
+    db.flush()
+    if task_in.custom_values:
+        apply_custom_values(db, task, task_in.custom_values)
+    record_audit(db, task, current_user, AuditAction.CREATED, f"Task created: {task.title}")
+    record_status_event(
+        db,
+        task,
+        current_user,
+        None,
+        TaskStatus.BACKLOG,
+        occurred_at=datetime.combine(task_in.start_date, time.min),
+    )
+
+    create_manual_entry(db, task, current_user, task_in)
+
+    db.commit()
+    db.refresh(task)
+    return _serialize(db, task)
+
+
+@router.post("/{task_id}/manual-log", response_model=TaskRead, status_code=201)
+def add_manual_log(
+    task_id: str,
+    entry_in: ManualEntryCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a manual/retroactive time entry to an existing task. Terminal,
+    exactly like Stop: the task becomes Completed and no further timer/manual
+    status transition is ever allowed out of it. Manual and live tracking are
+    mutually exclusive per task — enforced by requiring zero existing
+    `TimeEntry` rows of any kind."""
+    task = _get_task_or_404(db, task_id)
+    assert_can_edit_task(current_user, task)
+
+    if task.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Cannot log time against an archived task")
+    if task.status == TaskStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="Task is already completed")
+
+    existing_entry = db.query(TimeEntry).filter(TimeEntry.task_id == task_id).first()
+    if existing_entry is not None:
+        open_entry = open_entry_for_task(db, task_id)
+        if task.status == TaskStatus.ON_HOLD and open_entry is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="This task has a paused timer — resume or stop it first",
+            )
+        raise HTTPException(status_code=409, detail="This task already has a time entry logged")
+
+    validate_manual_entry_dates(db, entry_in)
+
+    create_manual_entry(db, task, current_user, entry_in)
     db.commit()
     db.refresh(task)
     return _serialize(db, task)

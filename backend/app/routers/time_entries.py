@@ -126,6 +126,7 @@ def start_timer(
     task.status = TaskStatus.IN_PROGRESS
     if task.first_in_progress_at is None:
         task.first_in_progress_at = now
+        task.started_at = now
     record_status_event(db, task, current_user, from_status, TaskStatus.IN_PROGRESS)
     record_audit(db, task, current_user, AuditAction.STATUS_CHANGED, f"{from_status.value} -> in_progress")
     record_audit(db, task, current_user, AuditAction.TIMER_STARTED, "Timer started")

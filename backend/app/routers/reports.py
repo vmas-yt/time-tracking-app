@@ -80,6 +80,15 @@ def lead_time(project_id: str | None = None, db: Session = Depends(get_db), curr
     """Time from task creation to Completed."""
     points = []
     for task in _completed_tasks(db, project_id, current_user):
+        # A manually-logged task's completed_at is the user-supplied
+        # Completion Date, which can be backdated before created_at (the
+        # real row-insertion time) -- that would otherwise produce
+        # negative/near-zero lead-time values and corrupt this report.
+        # Cycle Time excludes these tasks "for free" via its own
+        # `if not task.first_in_progress_at` guard below, since a manual
+        # task never has an In Progress period at all.
+        if task.is_manual_entry:
+            continue
         seconds = (task.completed_at - task.created_at).total_seconds()
         points.append(
             LeadTimePoint(
