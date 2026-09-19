@@ -639,6 +639,75 @@ class BoardConfig(Base):
     )
 
 
+class TeamBoardConfig(Base):
+    """Round C (team-scoped boards): one row per `Team`, holding exactly the
+    two things an admin can configure about that team's board -- which field
+    groups cards into swim lanes, and the board's own display name
+    (independent of `Team.name`; see docs/design/team-scoped-boards-design.md
+    §3 for why these are deliberately different fields).
+
+    Kept as its own table rather than columns on `Team` itself -- same
+    established precedent as `BoardConfig`/`ManualTimeEntrySettings` above,
+    both singleton tables deliberately kept separate from unrelated entities
+    for exactly this reason (see `ManualTimeEntrySettings`'s own docstring).
+    `Team` stays pure org-structure data; this table stays pure
+    board-presentation data.
+
+    `team_id` is the primary key (not a separate synthetic uuid + a unique
+    column) -- a true 1:1 extension of `Team`, so the FK itself doubles as
+    the uniqueness guarantee with no separate index needed for that purpose
+    (see db-admin's sign-off, design doc §7.4, on why no further index is
+    warranted here).
+
+    Lazily created on first `GET`/`PATCH /teams/{team_id}/board-config` for
+    a team that doesn't have a row yet -- identical idiom to
+    `routers/admin.py::get_board_config`'s existing lazy-create-if-missing
+    pattern for the `id="default"` singleton.
+
+    `swimlane_field` reuses the *existing* `SwimlaneField` Postgres native
+    enum type as-is (see `BoardConfig.swimlane_field`'s own `Enum(...)`
+    column) -- this round adds zero new enum members, so there is no
+    `ALTER TYPE ... ADD VALUE` risk of the kind flagged on `AuditAction`
+    above; a second column referencing an already-existing Postgres enum
+    type is an ordinary `CREATE TABLE`, verified empirically on both
+    SQLite and a real local Postgres 16 (design doc §7.4) -- the same
+    already-shipped pattern `TaskStatus` already uses across `Task.status`
+    and `TaskStatusEvent.from_status`/`to_status`.
+
+    `board_name` is nullable and, when null, the display layer falls back to
+    the team's own `Team.name` -- so an admin who never bothers to rename a
+    board sees a sensible default with zero extra admin action required.
+
+    Left behind, deliberately, when a team is soft-deactivated
+    (`Team.is_active=False`): this row is not deleted or otherwise touched.
+    `Team` rows are never hard-deleted in this codebase (`routers/teams.py::
+    delete_team` is soft-delete-only, confirmed by db-admin -- design doc
+    §7.4 Q3), so this FK can never be orphaned; a deactivated team's row
+    would simply become live again if the team were ever reactivated.
+
+    Backfill on an already-deployed database: see
+    `services/migrations.py::_migrate_team_board_config_backfill` and
+    docs/design/team-scoped-boards-design.md §7.4 for db-admin's finalized
+    decision (a per-active-team, insert-if-missing backfill that copies the
+    then-current `board_config.swimlane_field` value, re-checked -- but never
+    overwritten once set -- on every startup, not a one-shot
+    table-is-empty gate).
+    """
+
+    __tablename__ = "team_board_configs"
+
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), primary_key=True)
+    board_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    swimlane_field: Mapped[SwimlaneField] = mapped_column(
+        Enum(SwimlaneField), default=SwimlaneField.ASSIGNEE, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    team: Mapped["Team"] = relationship()
+
+
 class ManualTimeEntrySettings(Base):
     """Singleton row (id='default') for the admin-editable manual/retroactive
     time-logging policy -- same singleton pattern as `BoardConfig` above, but

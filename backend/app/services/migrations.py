@@ -85,6 +85,28 @@ Covers, in order:
      local Postgres 16 and SQLite, not just reasoned; see
      docs/design/custom-roles-design.md §6.5 (db-admin sign-off) and
      tests/test_migration_role_permission_audit_new_table.py.
+  10. Round C (team-scoped boards): `team_board_configs` is a brand-new table
+      (see `TeamBoardConfig` in models.py), created for free by
+      `Base.metadata.create_all` on both backends -- but unlike
+      `role_permission_audit_entries` above, this round's new table
+      interacts with a table that already has live, possibly admin-changed
+      data on any deployed environment: the `board_config` singleton
+      (`id="default"`). `_migrate_team_board_config_backfill` closes that
+      gap: for every currently-*active* `Team` that doesn't yet have a
+      `team_board_configs` row, insert one, copying the *current*
+      `board_config.swimlane_field` value -- so no existing team's board
+      silently changes swim-lane grouping on deploy just because this table
+      started out empty. See that function's own docstring for why this is
+      a data-state check (per-team "insert if missing", re-checked but never
+      overwritten on every startup) rather than a one-shot,
+      whole-table-is-empty gate, and
+      docs/design/team-scoped-boards-design.md §7.4 for db-admin's full
+      sign-off, including a real bug caught in the original design sketch's
+      fallback default (a lowercase `.value` string, not the enum member's
+      `.name` the DB actually stores -- the exact `AuditAction`-class
+      mistake this project's own history already flags, confirmed here to
+      crash Postgres outright and silently corrupt data readable-back on
+      SQLite, verified empirically before being fixed).
 """
 
 import logging
@@ -93,6 +115,8 @@ from datetime import datetime
 
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
+
+from app.models import SwimlaneField
 
 logger = logging.getLogger(__name__)
 
@@ -687,6 +711,111 @@ def _migrate_audit_action_add_manual_time_logged(engine: Engine, inspector) -> N
     logger.info("Schema migration: added 'MANUAL_TIME_LOGGED' to the Postgres auditaction enum type")
 
 
+def _migrate_team_board_config_backfill(engine: Engine, inspector) -> None:
+    """Round C (team-scoped boards): `team_board_configs` is a brand-new
+    table, already created by `Base.metadata.create_all` before this
+    function runs (same precondition `_migrate_org_structure_backfill`
+    relies on for `departments`/`teams`). This function's only job: give
+    every currently-*active* team a row, copying the org's existing global
+    swim-lane setting, so no existing team's board silently changes grouping
+    behavior on deploy just because this table starts out empty.
+
+    **Deliberately per-team, insert-if-missing, re-checked on every startup**
+    -- NOT a one-shot "does this table have any row at all" gate, which was
+    this feature's own design doc's original sketch (§7.2) and is *not* what
+    ships here; db-admin overrode it (design doc §7.4) for a concrete reason:
+    a single stray row -- e.g. one team's row created via the ordinary
+    lazy-create-on-read path (`GET /teams/{id}/board-config`) before this
+    function ever got a chance to run, or simply surviving from a restored
+    backup -- would make "the table is non-empty" true and silently skip the
+    backfill for *every other* active team forever, with no way to detect or
+    recover short of manual intervention (which this project's standing
+    constraint rules out -- every schema change must be automatic at
+    startup). Checking per-team instead removes that single point of
+    failure entirely.
+
+    This still isn't `_migrate_org_structure_backfill`'s schema-state idiom
+    (there's no column/table-presence signal here the way there is for a new
+    column) -- it's the *other* sanctioned data-state shape this module
+    already uses, `_migrate_rbac_schema_backfill`'s (`WHERE role_id IS
+    NULL`, re-run indefinitely): safe to re-check every startup specifically
+    *because* "this team has no `team_board_configs` row yet" is never a
+    legitimate permanent state to preserve (unlike `team_id IS NULL` on
+    `users`/`tasks`, which *is* permanent) -- every team is supposed to end
+    up with exactly one row eventually, lazily or via this backfill, and
+    this function only ever INSERTs a row that doesn't exist yet, never
+    UPDATEs one that does. So: an admin's already-set per-team preference
+    (via `PATCH`) or an already-lazily-created row is never touched by a
+    later run of this function, and a team created (or reactivated) after
+    the very first run still gets caught by the next restart's per-team
+    check -- self-healing in the same sense B1's role backfill is, without
+    B1's role backfill's "every row already has a value, so it's a
+    permanent no-op scan" end state ever applying here (deactivating and
+    reactivating a team is ordinary, expected admin activity in this app).
+    Deactivated teams are excluded from the `WHERE` filter itself (not
+    merely "left alone once seeded") -- their rows, if any, are still never
+    touched, matching `TeamBoardConfig`'s own docstring.
+
+    **Enum-safety note (the one real bug this design doc's original sketch
+    had -- see design doc §7.4 Q1/Q5 for the full writeup)**: `swimlane_field`
+    is a *native* Postgres `ENUM` column exactly like `BoardConfig
+    .swimlane_field` (confirmed empirically -- both columns reflect as
+    `sqlalchemy.dialects.postgresql.named_types.ENUM` sharing the *same*
+    underlying `swimlanefield` Postgres type, an ordinary, conflict-free
+    reuse, not a new type). SQLAlchemy persists the Python `Enum` member's
+    *name* (e.g. `"CATEGORY"`), never its lowercase `.value`
+    (`"category"`) -- so `board_config.swimlane_field`, read raw via SQL
+    here, already comes back as the correct upper-case label and is safe to
+    pass straight through into the new rows unchanged. The *fallback* value
+    (used only when `board_config` has no row yet, e.g. a fresh install
+    where nobody has ever opened the global board-config screen) must be
+    `SwimlaneField.ASSIGNEE.name` (`"ASSIGNEE"`) for the exact same reason --
+    using `.value` (`"assignee"`) there instead was confirmed empirically to
+    make this function crash outright on Postgres
+    (`InvalidTextRepresentation: invalid input value for enum swimlanefield:
+    "assignee"`) and, on SQLite (which enforces no such CHECK at INSERT
+    time), to silently write a row that then raises `LookupError` the next
+    time anything reads it back through the ORM. See
+    tests/test_migration_team_board_config_with_real_data.py for both
+    failure modes reproduced and the fix verified.
+    """
+    with engine.begin() as conn:
+        global_row = conn.execute(
+            text("SELECT swimlane_field FROM board_config WHERE id = 'default'")
+        ).fetchone()
+        default_field = global_row[0] if global_row is not None else SwimlaneField.ASSIGNEE.name
+
+        missing_team_ids = [
+            row[0]
+            for row in conn.execute(
+                text(
+                    "SELECT t.id FROM teams t WHERE t.is_active = true "
+                    "AND NOT EXISTS ("
+                    "  SELECT 1 FROM team_board_configs tbc WHERE tbc.team_id = t.id"
+                    ")"
+                )
+            ).fetchall()
+        ]
+        if not missing_team_ids:
+            return
+
+        now = datetime.utcnow()
+        for team_id in missing_team_ids:
+            conn.execute(
+                text(
+                    "INSERT INTO team_board_configs (team_id, board_name, swimlane_field, updated_at) "
+                    "VALUES (:team_id, NULL, :swimlane_field, :updated_at)"
+                ),
+                {"team_id": team_id, "swimlane_field": default_field, "updated_at": now},
+            )
+    logger.info(
+        "Schema migration: seeded team_board_configs for %d active team(s) missing a row "
+        "(copied board_config.swimlane_field=%r)",
+        len(missing_team_ids),
+        default_field,
+    )
+
+
 def ensure_schema_migrations(engine: Engine) -> None:
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
@@ -745,3 +874,6 @@ def ensure_schema_migrations(engine: Engine) -> None:
         # regardless of ordering changes elsewhere in this function).
         inspector = inspect(engine)
         _migrate_audit_action_add_manual_time_logged(engine, inspector)
+
+    if {"team_board_configs", "teams", "board_config"} <= table_names:
+        _migrate_team_board_config_backfill(engine, inspector)
