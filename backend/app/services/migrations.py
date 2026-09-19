@@ -71,6 +71,20 @@ Covers, in order:
      logged. `manual_time_entry_settings` is a brand-new table, created
      entirely by `Base.metadata.create_all` -- no migration code needed for
      it at all.
+  9. RBAC Round B3 (custom roles + granular permissions): `roles`/
+     `role_permissions`/`users.role_id` already exist from Round B1/B2 (no
+     further change to those); the only new schema surface is the brand-new
+     `role_permission_audit_entries` table (see `RolePermissionAuditEntry` in
+     models.py). Like `manual_time_entry_settings` above, this is a plain new
+     table with two ordinary forward FKs to already-existing tables
+     (`roles.id`, `users.id`) and no circular dependency -- `Base.metadata
+     .create_all` creates it for free on both SQLite and a fresh Postgres,
+     and on an already-deployed Postgres database (existing `roles`/`users`
+     rows, new table has zero rows to backfill). No `ensure_schema_migrations`
+     step exists (or is needed) for it -- verified empirically against a real
+     local Postgres 16 and SQLite, not just reasoned; see
+     docs/design/custom-roles-design.md §6.5 (db-admin sign-off) and
+     tests/test_migration_role_permission_audit_new_table.py.
 """
 
 import logging

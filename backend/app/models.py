@@ -152,6 +152,72 @@ class RolePermission(Base):
     role: Mapped["Role"] = relationship(back_populates="permissions")
 
 
+class RolePermissionAuditEntry(Base):
+    """RBAC Round B3: one added-or-removed `permission_key` for a role,
+    written by a single `PUT /roles/{id}/permissions` call. One row per
+    changed key, not one row per API call -- same normalization precedent as
+    `TaskCustomValue`/`DropdownOption` (one row per value, never a
+    comma-separated or JSON blob column), and the same "structured
+    one-row-per-fact" shape as `TaskStatusEvent` (`from_status`/`to_status`)
+    rather than `TaskAuditEntry`'s free-text `detail` string -- what changed
+    here is precisely a `(role, permission_key, added|removed)` triple, not
+    prose.
+
+    `batch_id` groups every row written by the same `PUT` call into one
+    displayed history entry (e.g. "Jane Doe: +manage_projects,
+    -manage_teams -- 2 hours ago"). Generated once per call in application
+    code (`str(uuid.uuid4())`), never a column default -- a column default
+    would (incorrectly) generate a fresh value per row instead of sharing one
+    value across every row written by the same call.
+
+    `role_id` is a real, non-null FK to `roles.id`, matching
+    `TaskAuditEntry.task_id`/`TaskStatusEvent.task_id`'s own precedent of a
+    real FK to the thing being audited. This is why `DELETE /roles/{id}` must
+    409 if this role has any row here (an *application-level* guard, not a
+    DB-level `ON DELETE RESTRICT` -- see db-admin's sign-off note in
+    docs/design/custom-roles-design.md §6.5 for why that matches this
+    codebase's existing convention, e.g. `delete_task`'s has-time-entries
+    guard against `TimeEntry.task_id`, which also has no DB-level
+    `ON DELETE RESTRICT`) -- never let a hard delete silently orphan or erase
+    audit history.
+
+    `change_type` is a plain, unvalidated-at-DB-level `String`
+    (`"added"` | `"removed"`), deliberately not a native Postgres `ENUM`
+    column -- mirrors `RolePermission.permission_key`'s own already-accepted
+    "plain string, app-validated" choice, and sidesteps entirely the
+    `ALTER TYPE ... ADD VALUE` migration class of risk documented on
+    `AuditAction` above: adding a third `change_type` value later, if one is
+    ever needed, is then a no-op schema-wise on both backends.
+
+    Brand-new table, two ordinary forward FKs to already-existing tables
+    (`roles`, `users`) -- `Base.metadata.create_all` creates it for free on
+    both SQLite and Postgres, no `ensure_schema_migrations` step needed or
+    added for it (verified empirically, not just reasoned -- see
+    docs/design/custom-roles-design.md §6.5 and
+    tests/test_migration_role_permission_audit_new_table.py). This is the
+    same "no migration needed for a brand-new table" shape as
+    `ManualTimeEntrySettings` above, not the "new column/type change on an
+    existing table" shape the rest of this file's migration notes describe.
+    """
+
+    __tablename__ = "role_permission_audit_entries"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    role_id: Mapped[str] = mapped_column(ForeignKey("roles.id"), nullable=False)
+    actor_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    batch_id: Mapped[str] = mapped_column(String, nullable=False)
+    permission_key: Mapped[str] = mapped_column(String, nullable=False)
+    change_type: Mapped[str] = mapped_column(String, nullable=False)  # "added" | "removed"
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_role_permission_audit_entries_role_id_occurred_at", "role_id", "occurred_at"),
+    )
+
+    role: Mapped["Role"] = relationship()
+    actor: Mapped["User"] = relationship()
+
+
 class User(Base):
     __tablename__ = "users"
 
