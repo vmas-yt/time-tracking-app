@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { DragEvent } from "react";
 import { api } from "@/lib/api";
@@ -19,10 +20,29 @@ import { Toast } from "./Toast";
 
 export function BoardScreen() {
   const board = useBoard();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [hoverColumn, setHoverColumn] = useState<TaskStatus | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
   const [projectName, setProjectName] = useState<string | null>(null);
+
+  // Round C (docs/design/team-scoped-boards-design.md §6.1) — the real,
+  // org-chart-`Team`-entity switcher. Mirrors the `?project=<id>` pattern:
+  // there's no existing `<Select>`-driven project switcher on this screen to
+  // literally mirror (the project filter is link-driven, from elsewhere), so
+  // this pushes the `?team=` param via the router directly, preserving any
+  // other query params (e.g. `?project=`) already present.
+  const handleTeamChange = (id: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (id) params.set("team", id);
+    else params.delete("team");
+    const qs = params.toString();
+    router.push(qs ? `/board?${qs}` : "/board");
+  };
+
+  const selectedTeam = board.teams.find((t) => t.id === board.teamId) ?? null;
+  const boardTitle = selectedTeam ? (board.effectiveBoardName ?? selectedTeam.name) : "Kanban board";
 
   useEffect(() => {
     if (!board.projectId) {
@@ -98,7 +118,7 @@ export function BoardScreen() {
     <div className="space-y-7">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="mt-1 text-3xl font-black tracking-tight text-ink">Kanban board</h1>
+          <h1 className="mt-1 text-3xl font-black tracking-tight text-ink">{boardTitle}</h1>
           <p className="mt-1.5 max-w-xl text-sm text-body">
             Viewing as <span className="font-semibold text-ink">{board.currentUser?.full_name}</span>. Drag cards
             between Backlog, To Do and On Hold; In Progress and Completed only change via the timer.
@@ -111,11 +131,31 @@ export function BoardScreen() {
               </Link>
             </p>
           )}
+          {selectedTeam && (
+            <p className="mt-1 text-xs text-mute">
+              {selectedTeam.name}&rsquo;s team board
+              {board.effectiveBoardName && board.effectiveBoardName !== selectedTeam.name ? " (renamed)" : ""} —{" "}
+              <button type="button" onClick={() => handleTeamChange("")} className="underline hover:text-body">
+                view all teams
+              </button>
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-end gap-4">
+          <label className="flex items-center gap-2.5 text-sm text-body">
+            <span className="font-semibold text-ink">Team</span>
+            <Select value={board.teamId ?? ""} onChange={(e) => handleTeamChange(e.target.value)} className="w-auto">
+              <option value="">All teams</option>
+              {board.teams.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </label>
           {board.currentUser?.role === "admin" && (
             <label className="flex items-center gap-2.5 text-sm text-body">
-              <span className="font-semibold text-ink">Team</span>
+              <span className="font-semibold text-ink">Manager</span>
               <Select
                 value={board.managerFilter ?? ""}
                 onChange={(e) => board.setManagerFilter(e.target.value || null)}
@@ -135,7 +175,7 @@ export function BoardScreen() {
             title={
               board.canManageBoardConfig
                 ? undefined
-                : "Only an admin can change swim-lane grouping (see Admin settings)"
+                : "You don't have permission to change swim-lane grouping (see Admin settings)"
             }
           >
             <span className="font-semibold text-ink">Group lanes by</span>

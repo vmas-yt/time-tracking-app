@@ -14,6 +14,8 @@ import type {
   TaskPriority,
   TaskStatus,
   TaskType,
+  Team,
+  TeamBoardConfig,
   TimeEntry,
   User,
 } from "@/lib/types";
@@ -54,18 +56,33 @@ interface BoardApi {
   error: string | null;
   projectId: string | null;
   // Round C (docs/design/team-scoped-boards-design.md §6.1) — `?team=<id>`
-  // scoping, threaded through exactly like `projectId` above. Only the
-  // task-list filter is wired end-to-end here (§4.4); the team switcher UI
-  // and per-team board-config fetch/display are a follow-on (designer).
+  // scoping, threaded through exactly like `projectId` above. Fully wired:
+  // the task-list filter (§4.4), the per-team board-config fetch/mutate
+  // (§4.1/§4.2, see `boardConfig`/`setSwimlaneField` below), and the team
+  // switcher UI itself (`BoardScreen.tsx`) all key off this.
   teamId: string | null;
   tasks: Task[];
   users: User[];
   managers: User[];
+  // Active teams (`GET /teams`, unfiltered by department) — populates the
+  // board's team switcher (§6.1) and the admin swim-lanes screen's per-team
+  // table (§6.2).
+  teams: Team[];
   projects: Project[];
   customFields: CustomField[];
   categoryOptions: DropdownOption[];
   priorityOptions: DropdownOption[];
-  boardConfig: BoardConfig;
+  // Round C: the global `BoardConfig` (unscoped view) when `teamId` is null,
+  // or the selected team's `TeamBoardConfig` when it isn't (§6.1) — both
+  // share `swimlane_field`/`updated_at`/`can_manage`, so every existing
+  // reader of `boardConfig.swimlane_field`/`.can_manage` keeps working
+  // unchanged regardless of which one is currently loaded.
+  boardConfig: BoardConfig | TeamBoardConfig;
+  // The board header's effective title when a team is selected: that team's
+  // `TeamBoardConfig.board_name` if set, else the team's own `Team.name`
+  // (§3). `null` when no team is selected (the unscoped view keeps its
+  // generic "Kanban board" title).
+  effectiveBoardName: string | null;
   currentUser: User | null;
   currentUserId: string;
   entries: TimeEntry[];
@@ -106,11 +123,12 @@ export function BoardProvider({
 }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [categoryOptions, setCategoryOptions] = useState<DropdownOption[]>([]);
   const [priorityOptions, setPriorityOptions] = useState<DropdownOption[]>([]);
-  const [boardConfig, setBoardConfig] = useState<BoardConfig>({
+  const [boardConfig, setBoardConfig] = useState<BoardConfig | TeamBoardConfig>({
     swimlane_field: "assignee",
     updated_at: "",
     can_manage: false,
@@ -146,17 +164,25 @@ export function BoardProvider({
     setBoardLoading(true);
     setBoardError(null);
     try {
-      const [taskList, userList, config, projectList, fieldList, categories, priorities] = await Promise.all([
-        api.listTasks(listParams()),
-        api.listUsers(),
-        api.getBoardConfig(),
-        api.listProjects(),
-        api.listCustomFields(),
-        api.listDropdownOptions({ scope: "task_category" }),
-        api.listDropdownOptions({ scope: "task_priority" }),
-      ]);
+      const [taskList, userList, teamList, config, projectList, fieldList, categories, priorities] =
+        await Promise.all([
+          api.listTasks(listParams()),
+          api.listUsers(),
+          api.listTeams(),
+          // Round C (§6.1, §5.3): a selected team's board reads/writes its
+          // own `TeamBoardConfig` (`GET /teams/{id}/board-config`), never
+          // the global singleton — the unscoped view (`teamId === null`)
+          // keeps using the global `GET /admin/board-config` exactly as
+          // before.
+          teamId ? api.getTeamBoardConfig(teamId) : api.getBoardConfig(),
+          api.listProjects(),
+          api.listCustomFields(),
+          api.listDropdownOptions({ scope: "task_category" }),
+          api.listDropdownOptions({ scope: "task_priority" }),
+        ]);
       setTasks(taskList);
       setUsers(userList);
+      setTeams(teamList);
       setBoardConfig(config);
       setProjects(projectList);
       setCustomFields(fieldList);
@@ -167,7 +193,7 @@ export function BoardProvider({
     } finally {
       setBoardLoading(false);
     }
-  }, [listParams]);
+  }, [listParams, teamId]);
 
   useEffect(() => {
     loadBoard();
@@ -209,10 +235,15 @@ export function BoardProvider({
 
   const setSwimlaneField = useCallback(
     async (field: SwimlaneField) => {
-      const updated = await session.runMutation("__swimlane__", () => api.updateBoardConfig(field));
+      // Round C (§4.2/§6.1): PATCH the selected team's own config when one is
+      // selected, the global singleton otherwise — mirrors `loadBoard`'s read
+      // side above so the two never drift onto different endpoints.
+      const updated = await session.runMutation("__swimlane__", () =>
+        teamId ? api.updateTeamBoardConfig(teamId, { swimlane_field: field }) : api.updateBoardConfig(field)
+      );
       if (updated) setBoardConfig(updated);
     },
-    [session]
+    [session, teamId]
   );
 
   const refresh = useCallback(() => {
@@ -232,6 +263,18 @@ export function BoardProvider({
   // what the server actually enforces.
   const canManageBoardConfig = boardConfig.can_manage;
 
+  // Round C (§3, §6.1): effective board title for the selected team — its
+  // own `board_name` if set, else its `Team.name` — `null` when unscoped.
+  // `"board_name" in boardConfig` narrows the union: only `TeamBoardConfig`
+  // carries that field, so this is `null` whenever the global config is the
+  // one currently loaded (i.e. `teamId` is null), even before `teams` has
+  // resolved.
+  const effectiveBoardName = useMemo(() => {
+    if (!teamId) return null;
+    const configName = "board_name" in boardConfig ? boardConfig.board_name : null;
+    return configName ?? teams.find((t) => t.id === teamId)?.name ?? null;
+  }, [teamId, boardConfig, teams]);
+
   const api_: BoardApi = useMemo(
     () => ({
       loading: boardLoading || session.sessionLoading,
@@ -241,11 +284,13 @@ export function BoardProvider({
       tasks,
       users,
       managers,
+      teams,
       projects,
       customFields,
       categoryOptions,
       priorityOptions,
       boardConfig,
+      effectiveBoardName,
       currentUser: session.currentUser,
       currentUserId: session.currentUser?.id ?? "",
       entries: session.entries,
@@ -280,11 +325,13 @@ export function BoardProvider({
       tasks,
       users,
       managers,
+      teams,
       projects,
       customFields,
       categoryOptions,
       priorityOptions,
       boardConfig,
+      effectiveBoardName,
       session.currentUser,
       session.entries,
       session.toast,

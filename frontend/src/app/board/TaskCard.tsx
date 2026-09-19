@@ -38,10 +38,20 @@ export function TaskCard({ task, isDragging, onDragStart, onDragEnd }: TaskCardP
   const board = useBoard();
   const assignee = board.users.find((u) => u.id === task.assignee_id);
   const categoryLabel = categoryLabelFor(task, board.categoryOptions);
+  // Whether the current viewer may edit/drag/drive this task's timer at all
+  // (assignee/creator/admin). `false` covers every "I can see this card but
+  // it isn't mine" case — a manager reviewing a report's task (existing) and,
+  // as of Round C (docs/design/team-scoped-boards-design.md §5.1/§9), a
+  // teammate who can now see this card purely because it shares their
+  // `team_id`. Both get the identical read-only treatment below rather than
+  // a team-specific special case, since the underlying rule ("can't edit
+  // what isn't yours") is the same regardless of *why* you can view it.
+  const editable = board.canEditTask(task);
   // Only draggable if the task hasn't reached its terminal status and the
   // viewer is actually allowed to edit it — dragging a task you can only
-  // view (e.g. a manager's report) would just 403 on drop.
-  const draggable = task.status !== "completed" && board.canEditTask(task);
+  // view (e.g. a manager's report, or a teammate's card) would just 403 on
+  // drop.
+  const draggable = task.status !== "completed" && editable;
 
   // Compact custom-field badges (docs/design/custom-fields-admin-design.md
   // §1.4): at most 2 fields with a non-empty value, in definition order,
@@ -85,12 +95,29 @@ export function TaskCard({ task, isDragging, onDragStart, onDragEnd }: TaskCardP
         // the two affordances aren't mutually exclusive.
         "cursor-pointer",
         draggable && "active:cursor-grabbing",
-        isDragging ? "scale-[0.97] opacity-40" : "hover:-translate-y-0.5 hover:bg-primary-pale/30",
+        isDragging
+          ? "scale-[0.97] opacity-40"
+          : editable
+            ? "hover:-translate-y-0.5 hover:bg-primary-pale/30"
+            : // Read-only card (§9): deliberately no lift-on-hover — that
+              // motion reads as "this is draggable/actionable," which would
+              // be actively misleading here. A plain background tint still
+              // signals the card responds to hover (it opens read-only
+              // detail) without implying drag-and-drop.
+              "hover:bg-canvas-soft",
         "focus-within:ring-2 focus-within:ring-primary-neutral focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-neutral"
       )}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex flex-wrap gap-1">
+          {!editable && (
+            <Badge
+              tone="gray"
+              title="You can view this task but can't edit it, drag it, or control its timer"
+            >
+              View only
+            </Badge>
+          )}
           {task.is_manual_entry && <ManualEntryBadge />}
           {task.task_type === "ad_hoc" && <Badge tone="amber">Ad-hoc</Badge>}
           {task.priority === "expedite" && <Badge tone="red">Expedite</Badge>}
@@ -133,7 +160,7 @@ export function TaskCard({ task, isDragging, onDragStart, onDragEnd }: TaskCardP
           task={task}
           entries={board.entries}
           currentUserId={board.currentUserId}
-          canEdit={board.canEditTask(task)}
+          canEdit={editable}
           isPending={board.isPending(task.id)}
           onStart={board.start}
           onPause={board.pause}
