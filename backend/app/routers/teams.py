@@ -21,9 +21,12 @@ def list_teams(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Any authenticated user may list teams. `include_inactive=true` is
-    admin-only-effect, same precedent as `GET /users?include_inactive` and
-    `GET /departments?include_inactive`."""
+    """Any authenticated user may list teams. `include_inactive=true` requires
+    `MANAGE_TEAMS` (occupancy/admin management, unlike `GET /users?
+    include_inactive`, which was relaxed to any authenticated user so
+    deactivated people's names still resolve correctly in historical
+    task/comment/audit-trail display — same precedent as
+    `GET /departments?include_inactive`, not `/users`)."""
     query = db.query(Team)
     if department_id:
         query = query.filter(Team.department_id == department_id)

@@ -60,7 +60,7 @@ export function userOptionsFor(
     const stale = users.find((u) => u.id === currentId);
     active.push({
       value: currentId,
-      label: stale ? `${stale.full_name} (Deactivated)` : currentId,
+      label: stale ? `${labelFor(stale)} (Deactivated)` : currentId,
       disabled: true,
     });
   }

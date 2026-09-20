@@ -136,9 +136,11 @@ def list_tasks(
     `services/authz.can_view_task` used elsewhere.
 
     `include_archived` defaults to excluding archived tasks for everyone; a
-    non-admin passing `true` is silently ignored (same pattern as
-    `include_inactive` on `GET /users`) — only an admin can actually see
-    archived tasks in the default list (§5.2).
+    caller without `ARCHIVE_TASKS` passing `true` is silently ignored (same
+    permission-gated pattern as `include_inactive` on `GET /teams`/
+    `GET /departments` — unlike `GET /users?include_inactive`, which is open
+    to any authenticated user so historical task/comment/audit display can
+    resolve a deactivated person's real name).
     """
     query = db.query(Task)
     if project_id:

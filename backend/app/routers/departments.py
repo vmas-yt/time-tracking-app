@@ -20,9 +20,12 @@ def list_departments(
     current_user: User = Depends(get_current_user),
 ):
     """Any authenticated user may list departments (Departments/Teams sidebar,
-    Users table's team picker). `include_inactive=true` is admin-only; a
-    non-admin passing it has it silently ignored — same precedent as
-    `GET /users?include_inactive`."""
+    Users table's team picker). `include_inactive=true` requires
+    `MANAGE_DEPARTMENTS`; a caller without it has it silently ignored. Unlike
+    `GET /users?include_inactive` (relaxed to any authenticated user so
+    deactivated people's names still resolve in historical display), a
+    deactivated department/team's *name* isn't needed for that same
+    historical-attribution purpose, so this stays permission-gated."""
     query = db.query(Department)
     if not (include_inactive and has_permission(current_user, Permission.MANAGE_DEPARTMENTS)):
         query = query.filter(Department.is_active.is_(True))

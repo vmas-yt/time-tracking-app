@@ -479,19 +479,30 @@ def test_list_users_excludes_inactive_by_default(client, auth_headers):
     assert not any(u["id"] == user["id"] for u in listed)
 
 
-def test_list_users_include_inactive_admin_only(client, auth_headers):
+def test_list_users_include_inactive_any_authenticated_user(client, auth_headers):
+    """`include_inactive=true` is open to any authenticated user, not just
+    admins — a deactivated user's name isn't sensitive, and every viewer
+    with legitimate access to a task/comment/audit-trail entry needs to be
+    able to resolve its assignee/author/actor's real name even after that
+    person is deactivated (regression test for a bug where this being
+    admin-only silently broke historical name display for every non-admin
+    viewer)."""
     user = _create_user(client, auth_headers, "hidden2@example.com").json()
     client.delete(f"/users/{user['id']}", headers=auth_headers)
 
     other = _create_user(client, auth_headers, "seer@example.com").json()
     other_headers = _login_headers(client, "seer@example.com")
 
-    # Non-admin passing include_inactive=true has it silently ignored.
-    listed = client.get("/users?include_inactive=true", headers=other_headers).json()
-    assert not any(u["id"] == user["id"] for u in listed)
+    listed_non_admin = client.get("/users?include_inactive=true", headers=other_headers).json()
+    assert any(u["id"] == user["id"] for u in listed_non_admin)
 
     listed_admin = client.get("/users?include_inactive=true", headers=auth_headers).json()
     assert any(u["id"] == user["id"] for u in listed_admin)
+
+    # Default (no include_inactive) still excludes deactivated users for
+    # everyone, admin or not.
+    default_non_admin = client.get("/users", headers=other_headers).json()
+    assert not any(u["id"] == user["id"] for u in default_non_admin)
 
 
 # ---- assignee_id must be an active user (§6.5) --------------------------------

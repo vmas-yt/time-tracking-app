@@ -12,7 +12,7 @@ from app.schemas import (
     UserRead,
     UserUpdate,
 )
-from app.services.authz import assert_admin, role_key
+from app.services.authz import assert_admin
 from app.services.teams import sync_team_manager, validate_team_id
 from app.services.users import (
     deactivate_user,
@@ -57,10 +57,16 @@ def list_users(
     current_user: User = Depends(get_current_user),
 ):
     """Excludes deactivated users by default so they stop appearing in
-    assignee/manager pickers. `include_inactive=true` is admin-only; a
-    non-admin passing it has it silently ignored rather than erroring."""
+    assignee/manager pickers. `include_inactive=true` is open to any
+    authenticated user (not admin-gated): a deactivated user's name/email
+    isn't sensitive, and every viewer with legitimate access to a task,
+    comment, or audit-trail entry needs to be able to resolve its
+    assignee/author/actor's real name even after that person is
+    deactivated — restricting this to admins silently broke historical
+    display (showing "Unassigned" or a raw user id) for every non-admin
+    viewer, which is the exact regression this comment now documents."""
     query = db.query(User)
-    if not (include_inactive and role_key(current_user) == "admin"):
+    if not include_inactive:
         query = query.filter(User.is_active.is_(True))
     return [_serialize(u) for u in query.all()]
 
