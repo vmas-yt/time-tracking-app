@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import type { Department, Role, Team, User } from "@/lib/types";
+import { userOptionsFor } from "@/lib/options";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
 import { SlideOver, SlideOverHeader } from "@/components/ui/SlideOver";
@@ -48,7 +49,7 @@ export function TeamFormPanel({
 
   const activeDepartments = departments.filter((d) => d.is_active);
   const builtinEmployeeRoleId = roles.find((r) => r.is_builtin && r.key === "employee")?.id ?? "";
-  const managerOptions = users.filter((u) => u.is_active && u.role_id !== builtinEmployeeRoleId);
+  const currentManager = managerId ? users.find((u) => u.id === managerId) : undefined;
 
   useEffect(() => {
     if (!open) return;
@@ -135,12 +136,23 @@ export function TeamFormPanel({
           <span className="font-semibold text-ink">Manager</span>
           <Select value={managerId} onChange={(e) => setManagerId(e.target.value)}>
             <option value="">— no manager —</option>
-            {managerOptions.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.full_name} ({m.role_name})
+            {userOptionsFor(
+              users,
+              managerId,
+              (u) => u.role_id !== builtinEmployeeRoleId,
+              (u) => `${u.full_name} (${u.role_name})`
+            ).map((o) => (
+              <option key={o.value} value={o.value} disabled={o.disabled}>
+                {o.label}
               </option>
             ))}
           </Select>
+          {currentManager && !currentManager.is_active && (
+            <p className="text-xs text-negative">
+              The current manager, {currentManager.full_name}, has been deactivated. Select a new manager to
+              continue.
+            </p>
+          )}
         </label>
 
         <div className="mt-auto flex gap-2 border-t border-canvas pt-4">

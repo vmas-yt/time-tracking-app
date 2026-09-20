@@ -36,7 +36,7 @@ export default function TaskDetailPage() {
     loadTask();
     api.listComments(taskId).then(setComments).catch(console.error);
     api.listAudit(taskId).then(setAudit).catch(console.error);
-    api.listUsers().then(setUsers).catch(console.error);
+    api.listUsers({ includeInactive: true }).then(setUsers).catch(console.error);
   }, [taskId, loadTask]);
 
   useEffect(load, [load]);

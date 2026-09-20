@@ -1,4 +1,4 @@
-import type { DropdownOption, Task } from "./types";
+import type { DropdownOption, Task, User } from "./types";
 import { TASK_CATEGORIES, TASK_PRIORITIES } from "./types";
 
 /** Active options only — what a picker should offer for new selections
@@ -31,6 +31,38 @@ export function selectOptionsFor(
   if (currentValue && !active.some((o) => o.value === currentValue)) {
     const stale = all.find((o) => o.value === currentValue);
     active.push({ value: currentValue, label: stale ? `${stale.label} (inactive)` : currentValue, disabled: true });
+  }
+  return active;
+}
+
+/** Builds a `<select>` option list for a user picker (manager/assignee):
+ * active, eligible users in list order, plus — if the current value isn't
+ * among them (the previously-picked user has since been deactivated, or no
+ * longer passes `eligible`) — a disabled trailing entry so the field doesn't
+ * render blank or silently drop the selection (same pattern as
+ * `selectOptionsFor` above, User-flavored). Requires the FULL user list
+ * (active + inactive) so a stale current value can still be resolved to its
+ * real name — pass an already-active-only list and the stale entry degrades
+ * to showing the raw id instead of a name. `labelFor` defaults to just the
+ * name (assignee pickers); manager pickers pass one that also shows the
+ * role, e.g. `(u) => \`${u.full_name} (${u.role_name})\`` — same
+ * disambiguation the pre-existing manager `<option>`s already showed. */
+export function userOptionsFor(
+  users: User[],
+  currentId: string | null | undefined,
+  eligible: (u: User) => boolean = () => true,
+  labelFor: (u: User) => string = (u) => u.full_name
+): { value: string; label: string; disabled: boolean }[] {
+  const active = users
+    .filter((u) => u.is_active && eligible(u))
+    .map((u) => ({ value: u.id, label: labelFor(u), disabled: false }));
+  if (currentId && !active.some((o) => o.value === currentId)) {
+    const stale = users.find((u) => u.id === currentId);
+    active.push({
+      value: currentId,
+      label: stale ? `${stale.full_name} (Deactivated)` : currentId,
+      disabled: true,
+    });
   }
   return active;
 }

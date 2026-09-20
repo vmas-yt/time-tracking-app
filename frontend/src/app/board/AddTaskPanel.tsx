@@ -243,7 +243,7 @@ export function AddTaskPanel({ open, onClose }: { open: boolean; onClose: () => 
               onChange={(e) => setAssigneeId(e.target.value)}
               disabled={mode === "manual"}
             >
-              {board.users.map((u) => (
+              {board.activeUsers.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.id === board.currentUserId ? `${u.full_name} (me)` : u.full_name}
                 </option>

@@ -14,7 +14,7 @@ import { Input, Select } from "@/components/ui/Input";
 import { SlideOver, SlideOverHeader } from "@/components/ui/SlideOver";
 import { useBoard } from "@/board/store";
 import { formatRelativeTime } from "@/board/format";
-import { activeOptions, categoryLabelFor } from "@/lib/options";
+import { activeOptions, categoryLabelFor, userOptionsFor } from "@/lib/options";
 import { CustomFieldInput } from "./CustomFieldInput";
 import { TimerControls } from "./TimerControls";
 
@@ -317,9 +317,9 @@ export function TaskDetailPanel() {
                   <span className="font-semibold text-ink">Assignee</span>
                   <Select value={editAssigneeId} onChange={(e) => setEditAssigneeId(e.target.value)}>
                     <option value="">Unassigned</option>
-                    {board.users.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.full_name}
+                    {userOptionsFor(board.users, editAssigneeId).map((o) => (
+                      <option key={o.value} value={o.value} disabled={o.disabled}>
+                        {o.label}
                       </option>
                     ))}
                   </Select>

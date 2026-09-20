@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import type { Role, Team, User } from "@/lib/types";
+import { userOptionsFor } from "@/lib/options";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
 import { SlideOver, SlideOverHeader } from "@/components/ui/SlideOver";
@@ -88,9 +89,6 @@ export function UserFormPanel({
   // against the builtin Employee row's id (rather than the legacy `role`
   // enum, which is `null` for any custom-role holder) so a user holding a
   // custom role is correctly still manager-eligible, not silently excluded.
-  const managerOptions = users.filter(
-    (u) => u.id !== user?.id && u.is_active && u.role_id !== builtinEmployeeRoleId
-  );
   const teamOptions = teams.filter((t) => t.is_active);
   const selectedTeam = teams.find((t) => t.id === teamId);
   const teamManager = selectedTeam?.manager_id ? users.find((u) => u.id === selectedTeam.manager_id) : undefined;
@@ -210,16 +208,22 @@ export function UserFormPanel({
           {teamId ? (
             <>
               <p className="w-full rounded-md border border-mute/30 bg-canvas-soft px-4 py-2.5 text-sm text-body">
-                {teamManager?.full_name ?? "— no manager —"}
+                {teamManager ? teamManager.full_name : "— no manager —"}
+                {teamManager && !teamManager.is_active && " (Deactivated — change the team's manager instead)"}
               </p>
               <p className="text-xs text-mute">Set by Team ({selectedTeam?.name}) — change the team&rsquo;s manager instead.</p>
             </>
           ) : (
             <Select value={managerId} onChange={(e) => setManagerId(e.target.value)}>
               <option value="">— no manager —</option>
-              {managerOptions.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.full_name} ({m.role_name})
+              {userOptionsFor(
+                users,
+                managerId,
+                (u) => u.id !== user?.id && u.role_id !== builtinEmployeeRoleId,
+                (u) => `${u.full_name} (${u.role_name})`
+              ).map((o) => (
+                <option key={o.value} value={o.value} disabled={o.disabled}>
+                  {o.label}
                 </option>
               ))}
             </Select>

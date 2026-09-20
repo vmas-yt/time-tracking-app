@@ -63,6 +63,7 @@ interface BoardApi {
   teamId: string | null;
   tasks: Task[];
   users: User[];
+  activeUsers: User[];
   managers: User[];
   // Active teams (`GET /teams`, unfiltered by department) — populates the
   // board's team switcher (§6.1) and the admin swim-lanes screen's per-team
@@ -167,7 +168,7 @@ export function BoardProvider({
       const [taskList, userList, teamList, config, projectList, fieldList, categories, priorities] =
         await Promise.all([
           api.listTasks(listParams()),
-          api.listUsers(),
+          api.listUsers({ includeInactive: true }),
           api.listTeams(),
           // Round C (§6.1, §5.3): a selected team's board reads/writes its
           // own `TeamBoardConfig` (`GET /teams/{id}/board-config`), never
@@ -251,7 +252,14 @@ export function BoardProvider({
     session.refreshEntries();
   }, [loadBoard, session]);
 
-  const managers = useMemo(() => users.filter((u) => u.role === "manager"), [users]);
+  // Round: `users` now includes inactive users too (see `loadBoard` above,
+  // fixing the "deactivated user's name disappears from historical
+  // comments/audit/assignee display" bug) — `activeUsers` is the
+  // active-only subset for pickers that shouldn't offer a deactivated user
+  // as a *new* selection (Add Task's assignee picker, the manager filter
+  // below).
+  const activeUsers = useMemo(() => users.filter((u) => u.is_active), [users]);
+  const managers = useMemo(() => activeUsers.filter((u) => u.role === "manager"), [activeUsers]);
   // Round C fix (docs/design/team-scoped-boards-design.md §5.3): read the
   // server-computed `can_manage` field off the fetched `BoardConfig`
   // instead of re-deriving permission from the legacy `role` string. The
@@ -283,6 +291,7 @@ export function BoardProvider({
       teamId,
       tasks,
       users,
+      activeUsers,
       managers,
       teams,
       projects,
@@ -324,6 +333,7 @@ export function BoardProvider({
       teamId,
       tasks,
       users,
+      activeUsers,
       managers,
       teams,
       projects,
